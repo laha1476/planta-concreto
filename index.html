@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Occicon Salcajá · Control de Operación</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800;900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #EDEAE4; font-family: 'Inter', sans-serif; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #F2A900; outline-offset: 1px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="root">
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#8C8880;">
+    Cargando planta…
+  </div>
+</div>
+<script>
+  window.addEventListener('error', function (e) {
+    var root = document.getElementById('root');
+    if (root && root.textContent.indexOf('Cargando') !== -1) {
+      root.innerHTML = '<div style="padding:24px;font-family:sans-serif;color:#B54834;">' +
+        'No se pudo cargar la app (' + (e.message || 'error desconocido') + '). ' +
+        'Verifica tu conexión a internet o intenta con otro navegador (Chrome).</div>';
+    }
+  });
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+/* ---------- Simple inline icons (no external icon library needed) ---------- */
+const Icon = ({ path, size = 16, color = 'currentColor', strokeWidth = 2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">{path}</svg>
+);
+const Truck = (p) => <Icon {...p} path={<>
+  <rect x="1" y="6" width="14" height="11" rx="1"/><path d="M15 9h4l3 3v5h-7z"/>
+  <circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/>
+</>}/>;
+const Package = (p) => <Icon {...p} path={<>
+  <path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>
+</>}/>;
+const Layers = (p) => <Icon {...p} path={<>
+  <path d="M12 2 2 7l10 5 10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/>
+</>}/>;
+const Users = (p) => <Icon {...p} path={<>
+  <circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/>
+  <circle cx="17.5" cy="9" r="2.7"/><path d="M15.5 14.2c2.6.4 4.5 2.3 4.5 5.8"/>
+</>}/>;
+const BarChart3 = (p) => <Icon {...p} path={<>
+  <path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/>
+</>}/>;
+const Gauge = (p) => <Icon {...p} path={<>
+  <path d="M12 15l3.5-4.5"/><circle cx="12" cy="15" r="1.2"/>
+  <path d="M3 15a9 9 0 0 1 18 0"/>
+</>}/>;
+const Plus = (p) => <Icon {...p} path={<><path d="M12 5v14"/><path d="M5 12h14"/></>}/>;
+const AlertTriangle = (p) => <Icon {...p} path={<>
+  <path d="M12 3 2 20h20z"/><path d="M12 9v5"/><circle cx="12" cy="17" r="0.6" fill={p.color||'currentColor'}/>
+</>}/>;
+const X = (p) => <Icon {...p} path={<><path d="M18 6 6 18"/><path d="M6 6l12 12"/></>}/>;
+const Check = (p) => <Icon {...p} path={<path d="M20 6 9 17l-5-5"/>}/>;
+const ChevronRight = (p) => <Icon {...p} path={<path d="M9 6l6 6-6 6"/>}/>;
+const Trash2 = (p) => <Icon {...p} path={<>
+  <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+</>}/>;
+const Droplet = (p) => <Icon {...p} path={<path d="M12 2c4 5 7 8.5 7 12a7 7 0 1 1-14 0c0-3.5 3-7 7-12z"/>}/>;
+const Beaker = (p) => <Icon {...p} path={<>
+  <path d="M9 3h6"/><path d="M10 3v6l-5.5 9.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-2.5L14 9V3"/>
+  <path d="M7 15h10"/>
+</>}/>;
+const PumpIcon = (p) => <Icon {...p} path={<>
+  <circle cx="12" cy="12" r="3"/><path d="M12 3v6"/><path d="M3 12h6"/><path d="M12 15v6"/><path d="M15 12h6"/>
+</>}/>;
+const Wrench = (p) => <Icon {...p} path={<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2z"/>}/>;
+const FileSpreadsheet = (p) => <Icon {...p} path={<>
+  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+  <path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 13v8"/>
+</>}/>;
+
+/* ---------- Data ---------- */
+const defaultData = () => ({
+  inventory: {
+    cemento: { label: 'Cemento', unit: 'sacos (42.5 kg)', qty: 900, min: 350, color: '#8C8880' },
+    arena: { label: 'Arena', unit: 'm³', qty: 120, min: 40, color: '#C9A876' },
+    grava: { label: 'Grava', unit: 'm³', qty: 150, min: 50, color: '#7A7264' },
+    aditivo: { label: 'Aditivo', unit: 'L', qty: 800, min: 200, color: '#4B7B5E' },
+    agua: { label: 'Agua', unit: 'm³', qty: 60, min: 20, color: '#5C8AA6' },
+  },
+  recipes: [
+    { id: 'r200', name: "f'c 200", cemento: 280, arena: 0.52, grava: 0.68, agua: 185, aditivoNombre: 'Plastificante estándar', aditivo: 1.5 },
+    { id: 'r250', name: "f'c 250", cemento: 320, arena: 0.5, grava: 0.66, agua: 185, aditivoNombre: 'Plastificante estándar', aditivo: 1.8 },
+    { id: 'r300', name: "f'c 300", cemento: 360, arena: 0.48, grava: 0.64, agua: 185, aditivoNombre: 'Superplastificante', aditivo: 2.2 },
+  ],
+  clients: [
+    { id: 'c1', name: 'Constructora Reyna', obra: 'Edificio Norte' },
+    { id: 'c2', name: 'Grupo Vértice', obra: 'Puente Km 12' },
+  ],
+  orders: [],
+  fleet: [
+    { id: 'u1', type: 'camion', num: 1, name: 'Unidad 01' },
+    { id: 'u2', type: 'camion', num: 2, name: 'Unidad 02' },
+    { id: 'u3', type: 'camion', num: 3, name: 'Unidad 03' },
+    { id: 'u4', type: 'camion', num: 4, name: 'Unidad 04' },
+    { id: 'u5', type: 'camion', num: 5, name: 'Unidad 05' },
+    { id: 'u6', type: 'camion', num: 6, name: 'Unidad 06' },
+    { id: 'u7', type: 'bomba', num: 1, name: 'Bomba 01' },
+  ],
+  nextCamionNum: 7,
+  nextBombaNum: 2,
+  dispatches: {},
+  nextOrderNum: 1,
+  maintenance: [],
+  nextMaintNum: 1,
+});
+
+const FLOW = {
+  camion: { disponible: 'cargando', cargando: 'en ruta', 'en ruta': 'entregado' },
+  bomba: { disponible: 'en servicio' },
+};
+const FINAL_STATUS = { camion: 'entregado', bomba: 'en servicio' };
+const unitLabel = (u) => u.name && u.name.trim() ? u.name : (u.type === 'bomba' ? `Bomba ${String(u.num).padStart(2, '0')}` : `Unidad ${String(u.num).padStart(2, '0')}`);
+
+const STATUS_COLORS = { disponible: '#4B7B5E', cargando: '#F2A900', 'en ruta': '#5C8AA6', entregado: '#8C8880', 'en servicio': '#8A5CA6' };
+const STORAGE_KEY = 'planta-concreto-data-v3';
+
+/* ---------- Configuración de Supabase ----------
+   Pega aquí tu Project URL y tu llave "anon public" (Project Settings → API en Supabase).
+   Mientras estos dos campos estén vacíos, la app sigue funcionando en modo local
+   (solo en este dispositivo/navegador), igual que antes. */
+const SUPABASE_URL = 'https://twfvkrybvcijnainfhse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3ZnZrcnlidmNpam5haW5maHNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMDY5MDIsImV4cCI6MjEwMDc4MjkwMn0._eV6KIdsfBFf7Rm9hcewZZw_srL5yesVX66WFBCI3a8';
+const SUPABASE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+const supabaseClient = SUPABASE_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+function usePlantData() {
+  const [data, setData] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [syncMode, setSyncMode] = useState(SUPABASE_ENABLED ? 'nube' : 'local');
+  const lastWritten = React.useRef(null);
+
+  // ---- Carga inicial ----
+  useEffect(() => {
+    (async () => {
+      if (!SUPABASE_ENABLED) {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          setData(raw ? JSON.parse(raw) : defaultData());
+        } catch (e) { setData(defaultData()); }
+        setLoaded(true);
+        return;
+      }
+      try {
+        const { data: row, error } = await supabaseClient.from('plant_state').select('*').eq('id', 'main').single();
+        if (error || !row || !row.data || Object.keys(row.data).length === 0) {
+          const fresh = defaultData();
+          await supabaseClient.from('plant_state').upsert({ id: 'main', data: fresh, updated_at: new Date().toISOString() });
+          lastWritten.current = JSON.stringify(fresh);
+          setData(fresh);
+        } else {
+          lastWritten.current = JSON.stringify(row.data);
+          setData(row.data);
+        }
+        setSyncMode('nube');
+      } catch (e) {
+        // Sin conexión a Supabase: cae a modo local para no perder la app
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          setData(raw ? JSON.parse(raw) : defaultData());
+        } catch (e2) { setData(defaultData()); }
+        setSyncMode('sin conexión');
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // ---- Suscripción en tiempo real (otros dispositivos escribiendo) ----
+  useEffect(() => {
+    if (!SUPABASE_ENABLED) return;
+    const channel = supabaseClient
+      .channel('plant_state_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plant_state', filter: 'id=eq.main' }, (payload) => {
+        const incoming = payload.new && payload.new.data;
+        if (!incoming) return;
+        const incomingStr = JSON.stringify(incoming);
+        if (incomingStr === lastWritten.current) return; // es el cambio que nosotros mismos escribimos
+        lastWritten.current = incomingStr;
+        setData(incoming);
+      })
+      .subscribe();
+    return () => { supabaseClient.removeChannel(channel); };
+  }, []);
+
+  // ---- Guardar cambios locales ----
+  useEffect(() => {
+    if (!loaded || !data) return;
+    const asStr = JSON.stringify(data);
+    if (asStr === lastWritten.current) return;
+
+    if (!SUPABASE_ENABLED) {
+      try { localStorage.setItem(STORAGE_KEY, asStr); } catch (e) {}
+      return;
+    }
+    const t = setTimeout(async () => {
+      lastWritten.current = asStr;
+      try {
+        await supabaseClient.from('plant_state').upsert({ id: 'main', data, updated_at: new Date().toISOString() });
+      } catch (e) { /* se reintenta en el próximo cambio */ }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [data, loaded]);
+
+  return [data, setData, syncMode];
+}
+
+/* ---------- UI atoms ---------- */
+const Eyebrow = ({ children }) => (
+  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#8C8880', marginBottom: 4 }}>{children}</div>
+);
+const H1 = ({ children }) => (
+  <h1 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 34, letterSpacing: '0.01em', textTransform: 'uppercase', color: '#2A2724', margin: 0 }}>{children}</h1>
+);
+const Card = ({ children, style }) => (
+  <div style={{ background: '#FBFAF7', border: '1px solid #DEDACF', borderRadius: 4, padding: 18, ...style }}>{children}</div>
+);
+const Btn = ({ children, onClick, variant = 'primary', style, disabled }) => {
+  const base = { fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 13, padding: '9px 16px', borderRadius: 3, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, opacity: disabled ? 0.5 : 1 };
+  const variants = {
+    primary: { background: '#2A2724', color: '#F2A900' },
+    accent: { background: '#F2A900', color: '#2A2724' },
+    ghost: { background: 'transparent', color: '#2A2724', border: '1px solid #C9C4B6' },
+  };
+  return <button onClick={onClick} disabled={disabled} style={{ ...base, ...variants[variant], ...style }}>{children}</button>;
+};
+const Field = ({ label, children }) => (
+  <label style={{ display: 'block', marginBottom: 10 }}>
+    <div style={{ fontSize: 12, fontWeight: 600, color: '#6B6659', marginBottom: 4 }}>{label}</div>
+    {children}
+  </label>
+);
+const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #C9C4B6', borderRadius: 3, fontFamily: "'Inter', sans-serif", fontSize: 14, background: '#fff', color: '#2A2724' };
+
+const NAV = [
+  { id: 'dashboard', label: 'Resumen', icon: Gauge },
+  { id: 'inventario', label: 'Inventario', icon: Package },
+  { id: 'disenos', label: 'Diseños de mezcla', icon: Beaker },
+  { id: 'produccion', label: 'Producción', icon: Layers },
+  { id: 'despachos', label: 'Despachos', icon: Truck },
+  { id: 'mantenimiento', label: 'Mantenimiento', icon: Wrench },
+  { id: 'clientes', label: 'Clientes', icon: Users },
+  { id: 'reportes', label: 'Reportes', icon: BarChart3 },
+  { id: 'datos', label: 'Datos (Excel)', icon: FileSpreadsheet },
+];
+
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+/* ---------- App ---------- */
+function App() {
+  const [data, setData, syncMode] = usePlantData();
+  const [tab, setTab] = useState('dashboard');
+
+  if (!data) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EDEAE4', fontFamily: "'Inter', sans-serif", color: '#8C8880' }}>
+        Cargando planta…
+      </div>
+    );
+  }
+
+  const syncColor = syncMode === 'nube' ? '#4B7B5E' : syncMode === 'sin conexión' ? '#B54834' : '#8C8880';
+  const syncLabel = syncMode === 'nube' ? 'sincronizado en la nube' : syncMode === 'sin conexión' ? 'sin conexión a la nube' : 'modo local (solo este dispositivo)';
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#EDEAE4' }}>
+      <header style={{ background: '#2A2724', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #F2A900' }}>
+        <div>
+          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 24, color: '#F2A900', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Occicon Salcajá</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A8A296', letterSpacing: '0.08em' }}>CONTROL DE OPERACIÓN · {data.fleet.length} UNIDADES</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: syncColor }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: syncColor, display: 'inline-block' }} />
+          {syncLabel}
+        </div>
+      </header>
+
+      <nav style={{ display: 'flex', overflowX: 'auto', background: '#FBFAF7', borderBottom: '1px solid #DEDACF' }}>
+        {NAV.map(n => {
+          const IconC = n.icon; const active = tab === n.id;
+          return (
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', border: 'none', background: 'transparent', borderBottom: active ? '3px solid #F2A900' : '3px solid transparent', color: active ? '#2A2724' : '#8C8880', fontWeight: active ? 700 : 500, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Inter', sans-serif" }}>
+              <IconC size={15} /> {n.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      <main style={{ padding: 20, maxWidth: 1100, margin: '0 auto' }}>
+        {tab === 'dashboard' && <Dashboard data={data} />}
+        {tab === 'inventario' && <Inventario data={data} setData={setData} />}
+        {tab === 'disenos' && <DisenosMezcla data={data} setData={setData} />}
+        {tab === 'produccion' && <Produccion data={data} setData={setData} />}
+        {tab === 'despachos' && <Despachos data={data} setData={setData} />}
+        {tab === 'mantenimiento' && <Mantenimiento data={data} setData={setData} />}
+        {tab === 'clientes' && <Clientes data={data} setData={setData} />}
+        {tab === 'reportes' && <Reportes data={data} />}
+        {tab === 'datos' && <Datos data={data} setData={setData} />}
+      </main>
+    </div>
+  );
+}
+
+function Dashboard({ data }) {
+  const lowStock = Object.entries(data.inventory).filter(([, v]) => v.qty <= v.min);
+  const camiones = data.fleet.filter(u => u.type === 'camion');
+  const bombas = data.fleet.filter(u => u.type === 'bomba');
+  const camionesDisp = camiones.filter(u => !data.dispatches[u.id] || data.dispatches[u.id].status === 'disponible').length;
+  const bombasDisp = bombas.filter(u => !data.dispatches[u.id] || data.dispatches[u.id].status === 'disponible').length;
+  const ordersToday = data.orders.filter(o => o.date === todayStr()).length;
+  const m3Today = data.orders.filter(o => o.date === todayStr()).reduce((s, o) => s + Number(o.volumeM3), 0);
+
+  return (
+    <div>
+      <Eyebrow>Estado actual</Eyebrow>
+      <H1>Resumen de planta</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 20 }}>
+        <StatCard label="Mixers disponibles" value={`${camionesDisp} / ${camiones.length}`} icon={Truck} />
+        <StatCard label="Bombas disponibles" value={`${bombasDisp} / ${bombas.length}`} icon={PumpIcon} />
+        <StatCard label="Órdenes hoy" value={ordersToday} icon={Layers} />
+        <StatCard label="m³ producidos hoy" value={m3Today.toFixed(1)} icon={Gauge} />
+        <StatCard label="Materiales en alerta" value={lowStock.length} icon={AlertTriangle} warn={lowStock.length > 0} />
+      </div>
+      <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1.3fr 1fr' : '1fr', gap: 16 }}>
+        <Card>
+          <Eyebrow>Silos y tanques</Eyebrow>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+            {Object.entries(data.inventory).map(([key, v]) => <SiloBar key={key} v={v} />)}
+          </div>
+        </Card>
+        <Card>
+          <Eyebrow>Tablero de despacho</Eyebrow>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
+            {data.fleet.map(u => {
+              const d = data.dispatches[u.id]; const status = d ? d.status : 'disponible';
+              const order = d && data.orders.find(o => o.id === d.orderId);
+              const UIcon = u.type === 'bomba' ? PumpIcon : Truck;
+              return (
+                <div key={u.id} style={{ border: '1px solid #DEDACF', borderRadius: 4, padding: '10px 8px', textAlign: 'center', background: '#fff' }}>
+                  <UIcon size={14} color="#8C8880" />
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 22, color: '#2A2724' }}>{String(u.num).padStart(2, '0')}</div>
+                  <div style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: STATUS_COLORS[status], marginRight: 5 }} />
+                  <span style={{ fontSize: 11, color: '#6B6659', textTransform: 'capitalize' }}>{status}</span>
+                  {order && <div style={{ fontSize: 10, color: '#8C8880', marginTop: 3, fontFamily: "'IBM Plex Mono', monospace" }}>#{order.id}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, icon: IconC, warn }) {
+  return (
+    <Card style={{ borderColor: warn ? '#E3B4A6' : '#DEDACF', background: warn ? '#FBF3EF' : '#FBFAF7' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: warn ? '#B54834' : '#8C8880' }}>
+        <IconC size={16} />
+        <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
+      </div>
+      <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 36, color: warn ? '#B54834' : '#2A2724', marginTop: 4 }}>{value}</div>
+    </Card>
+  );
+}
+
+function SiloBar({ v }) {
+  const pct = Math.min(100, Math.round((v.qty / (v.min * 3)) * 100));
+  const low = v.qty <= v.min;
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+        <span style={{ fontWeight: 600, color: '#2A2724' }}>{v.label}</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: low ? '#B54834' : '#6B6659' }}>{v.qty} {v.unit} {low ? '· bajo' : ''}</span>
+      </div>
+      <div style={{ height: 8, background: '#E5E1D6', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: low ? '#B54834' : v.color, transition: 'width 0.3s' }} />
+      </div>
+    </div>
+  );
+}
+
+function Inventario({ data, setData }) {
+  const [editing, setEditing] = useState(null);
+  const [amount, setAmount] = useState('');
+  const adjust = (key, delta) => setData(d => ({ ...d, inventory: { ...d.inventory, [key]: { ...d.inventory[key], qty: Math.max(0, +(d.inventory[key].qty + delta).toFixed(2)) } } }));
+  const applyAmount = (key) => { const n = parseFloat(amount); if (!isNaN(n)) adjust(key, n); setAmount(''); setEditing(null); };
+
+  return (
+    <div>
+      <Eyebrow>Materia prima</Eyebrow>
+      <H1>Inventario</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginTop: 20 }}>
+        {Object.entries(data.inventory).map(([key, v]) => (
+          <Card key={key}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div style={{ fontWeight: 700, color: '#2A2724' }}>{v.label}</div>
+              {v.qty <= v.min && <AlertTriangle size={14} color="#B54834" />}
+            </div>
+            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 32, color: '#2A2724', margin: '6px 0' }}>
+              {v.qty} <span style={{ fontSize: 16, color: '#8C8880' }}>{v.unit}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#8C8880', marginBottom: 10 }}>mínimo: {v.min} {v.unit}</div>
+            {editing === key ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input autoFocus type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="cantidad" style={{ ...inputStyle, flex: 1 }} />
+                <Btn variant="accent" onClick={() => applyAmount(key)}><Check size={14} /></Btn>
+                <Btn variant="ghost" onClick={() => { setEditing(null); setAmount(''); }}><X size={14} /></Btn>
+              </div>
+            ) : (
+              <Btn variant="ghost" onClick={() => setEditing(key)}>Recepción / ajuste</Btn>
+            )}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DisenosMezcla({ data, setData }) {
+  const empty = { nombre: '', cemento: '', arena: '', piedrin: '', agua: '', aditivoNombre: '', aditivo: '' };
+  const [form, setForm] = useState(empty);
+  const [error, setError] = useState('');
+
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const add = () => {
+    const { nombre, cemento, arena, piedrin, agua, aditivoNombre, aditivo } = form;
+    if (!nombre.trim()) { setError('Ponle un nombre al diseño (ej. f\'c 250).'); return; }
+    const nums = [cemento, arena, piedrin, agua, aditivo].map(v => parseFloat(v));
+    if (nums.some(n => isNaN(n) || n < 0)) { setError('Completa las 5 cantidades con números válidos.'); return; }
+    const [c, a, p, ag, ad] = nums;
+    setData(d => ({
+      ...d,
+      recipes: [...d.recipes, { id: `r${Date.now()}`, name: nombre.trim(), cemento: c, arena: a, grava: p, agua: ag, aditivoNombre: aditivoNombre.trim(), aditivo: ad }],
+    }));
+    setForm(empty);
+    setError('');
+  };
+
+  const remove = (id) => setData(d => ({ ...d, recipes: d.recipes.filter(r => r.id !== id) }));
+
+  return (
+    <div>
+      <Eyebrow>Fórmulas de dosificación</Eyebrow>
+      <H1>Diseños de mezcla</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1fr 1.4fr' : '1fr', gap: 16, marginTop: 20 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Nuevo diseño</div>
+          <div style={{ fontSize: 12, color: '#8C8880', marginBottom: 12 }}>Cantidades por 1 m³ de concreto.</div>
+          <Field label="Nombre del diseño (ej. f'c 250)">
+            <input style={inputStyle} value={form.nombre} onChange={set('nombre')} />
+          </Field>
+          <Field label="Cemento (kg/m³)">
+            <input type="number" min="0" style={inputStyle} value={form.cemento} onChange={set('cemento')} placeholder="ej. 320" />
+          </Field>
+          <Field label="Arena (m³/m³)">
+            <input type="number" min="0" step="0.01" style={inputStyle} value={form.arena} onChange={set('arena')} placeholder="ej. 0.50" />
+          </Field>
+          <Field label="Piedrín / grava (m³/m³)">
+            <input type="number" min="0" step="0.01" style={inputStyle} value={form.piedrin} onChange={set('piedrin')} placeholder="ej. 0.66" />
+          </Field>
+          <Field label="Agua (L/m³)">
+            <input type="number" min="0" style={inputStyle} value={form.agua} onChange={set('agua')} placeholder="ej. 185" />
+          </Field>
+          <Field label="Nombre o clase de aditivo (ej. plastificante Sika)">
+            <input style={inputStyle} value={form.aditivoNombre} onChange={set('aditivoNombre')} placeholder="ej. Superplastificante Sikament" />
+          </Field>
+          <Field label="Aditivo (L/m³)">
+            <input type="number" min="0" step="0.1" style={inputStyle} value={form.aditivo} onChange={set('aditivo')} placeholder="ej. 1.8" />
+          </Field>
+          {error && <div style={{ color: '#B54834', fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          <Btn variant="accent" onClick={add}><Plus size={14} /> Guardar diseño</Btn>
+        </Card>
+
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Diseños guardados</div>
+          {data.recipes.length === 0 && <div style={{ color: '#8C8880', fontSize: 13 }}>Aún no hay diseños de mezcla.</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {data.recipes.map(r => (
+              <div key={r.id} style={{ border: '1px solid #EFEBE0', borderRadius: 4, padding: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 20, color: '#2A2724' }}>{r.name}</div>
+                  <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={15} /></button>
+                </div>
+                <div style={{ fontSize: 12, color: '#6B6659', fontFamily: "'IBM Plex Mono', monospace" }}>
+                  {r.cemento} kg cemento · {r.arena} m³ arena · {r.grava} m³ piedrín · {r.agua} L agua · {r.aditivo} L {r.aditivoNombre ? `(${r.aditivoNombre})` : 'aditivo'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Produccion({ data, setData }) {
+  const [form, setForm] = useState({ recipeId: data.recipes[0]?.id || '', clientId: '', volumeM3: '' });
+  const [error, setError] = useState('');
+  const recipe = data.recipes.find(r => r.id === form.recipeId);
+  const vol = parseFloat(form.volumeM3) || 0;
+  const need = recipe ? { cemento: (recipe.cemento * vol) / 42.5, arena: recipe.arena * vol, grava: recipe.grava * vol, agua: (recipe.agua * vol) / 1000, aditivo: recipe.aditivo * vol } : null;
+  const canProduce = need && Object.entries(need).every(([k, v]) => data.inventory[k].qty >= v) && vol > 0;
+
+  const createOrder = () => {
+    if (!recipe || vol <= 0) { setError('Indica una receta y un volumen válido.'); return; }
+    if (!canProduce) { setError('No hay suficiente materia prima para este volumen.'); return; }
+    const id = `OP-${String(data.nextOrderNum).padStart(4, '0')}`;
+    setData(d => ({
+      ...d, nextOrderNum: d.nextOrderNum + 1,
+      orders: [...d.orders, { id, date: todayStr(), recipeId: recipe.id, recipeName: recipe.name, clientId: form.clientId || null, volumeM3: vol, status: 'producido' }],
+      inventory: {
+        ...d.inventory,
+        cemento: { ...d.inventory.cemento, qty: +(d.inventory.cemento.qty - need.cemento).toFixed(2) },
+        arena: { ...d.inventory.arena, qty: +(d.inventory.arena.qty - need.arena).toFixed(2) },
+        grava: { ...d.inventory.grava, qty: +(d.inventory.grava.qty - need.grava).toFixed(2) },
+        agua: { ...d.inventory.agua, qty: +(d.inventory.agua.qty - need.agua).toFixed(2) },
+        aditivo: { ...d.inventory.aditivo, qty: +(d.inventory.aditivo.qty - need.aditivo).toFixed(2) },
+      },
+    }));
+    setForm({ recipeId: data.recipes[0]?.id || '', clientId: '', volumeM3: '' });
+    setError('');
+  };
+
+  return (
+    <div>
+      <Eyebrow>Órdenes de producción</Eyebrow>
+      <H1>Producción</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1fr 1.4fr' : '1fr', gap: 16, marginTop: 20 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Nueva orden</div>
+          <Field label="Receta">
+            <select style={inputStyle} value={form.recipeId} onChange={e => setForm(f => ({ ...f, recipeId: e.target.value }))}>
+              {data.recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Cliente (opcional)">
+            <select style={inputStyle} value={form.clientId} onChange={e => setForm(f => ({ ...f, clientId: e.target.value }))}>
+              <option value="">—</option>
+              {data.clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.obra}</option>)}
+            </select>
+          </Field>
+          <Field label="Volumen (m³)">
+            <input type="number" min="0" style={inputStyle} value={form.volumeM3} onChange={e => setForm(f => ({ ...f, volumeM3: e.target.value }))} placeholder="ej. 7" />
+          </Field>
+          {need && vol > 0 && (
+            <div style={{ fontSize: 12, color: '#6B6659', fontFamily: "'IBM Plex Mono', monospace", background: '#F4F1EA', padding: 10, borderRadius: 3, marginBottom: 10 }}>
+              Consumo estimado: {need.cemento.toFixed(1)} sacos de cemento · {need.arena.toFixed(2)} m³ arena · {need.grava.toFixed(2)} m³ grava · {need.aditivo.toFixed(1)} L aditivo
+            </div>
+          )}
+          {error && <div style={{ color: '#B54834', fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          <Btn variant="accent" onClick={createOrder} disabled={!canProduce}><Plus size={14} /> Registrar producción</Btn>
+        </Card>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Órdenes recientes</div>
+          {data.orders.length === 0 && <div style={{ color: '#8C8880', fontSize: 13 }}>Aún no hay órdenes registradas.</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[...data.orders].reverse().map(o => (
+              <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #EFEBE0', paddingBottom: 8 }}>
+                <div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: '#2A2724' }}>{o.id}</div>
+                  <div style={{ fontSize: 12, color: '#8C8880' }}>{o.recipeName} · {o.date}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700 }}>{o.volumeM3} m³</div>
+                  <div style={{ fontSize: 11, color: '#8C8880' }}>{o.status}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Despachos({ data, setData }) {
+  const pendingOrders = data.orders.filter(o => o.status === 'producido');
+  const [editingUnit, setEditingUnit] = useState(null);
+  const [nameInput, setNameInput] = useState('');
+
+  const startEdit = (u) => { setEditingUnit(u.id); setNameInput(unitLabel(u)); };
+  const saveEdit = (unitId) => { renameUnit(unitId, nameInput.trim()); setEditingUnit(null); setNameInput(''); };
+
+  const assign = (unitId, orderId) => setData(d => {
+    const unit = d.fleet.find(u => u.id === unitId);
+    const firstStatus = unit.type === 'bomba' ? 'en servicio' : 'cargando';
+    return {
+      ...d,
+      dispatches: { ...d.dispatches, [unitId]: { orderId, status: firstStatus, since: Date.now() } },
+      orders: d.orders.map(o => o.id === orderId ? { ...o, status: 'asignado' } : o),
+    };
+  });
+
+  const advance = (unitId) => setData(d => {
+    const disp = d.dispatches[unitId]; if (!disp) return d;
+    const unit = d.fleet.find(u => u.id === unitId); if (!unit) return d;
+    const order = disp.orderId;
+    const next = FLOW[unit.type][disp.status];
+    if (!next) return { ...d, dispatches: { ...d.dispatches, [unitId]: undefined }, orders: d.orders.map(o => o.id === order ? { ...o, status: 'entregado' } : o) };
+    return { ...d, dispatches: { ...d.dispatches, [unitId]: { ...disp, status: next } } };
+  });
+
+  const addUnit = (type) => setData(d => {
+    const num = type === 'camion' ? d.nextCamionNum : d.nextBombaNum;
+    const name = type === 'bomba' ? `Bomba ${String(num).padStart(2, '0')}` : `Unidad ${String(num).padStart(2, '0')}`;
+    const unit = { id: `u${Date.now()}`, type, num, name };
+    return {
+      ...d,
+      fleet: [...d.fleet, unit],
+      nextCamionNum: type === 'camion' ? d.nextCamionNum + 1 : d.nextCamionNum,
+      nextBombaNum: type === 'bomba' ? d.nextBombaNum + 1 : d.nextBombaNum,
+    };
+  });
+
+  const renameUnit = (unitId, name) => setData(d => ({
+    ...d, fleet: d.fleet.map(u => u.id === unitId ? { ...u, name } : u),
+  }));
+
+  const removeUnit = (unitId) => setData(d => {
+    const rest = { ...d.dispatches }; delete rest[unitId];
+    return { ...d, fleet: d.fleet.filter(u => u.id !== unitId), dispatches: rest };
+  });
+
+  return (
+    <div>
+      <Eyebrow>Flotilla · {data.fleet.filter(u => u.type === 'camion').length} mixers · {data.fleet.filter(u => u.type === 'bomba').length} bomba(s)</Eyebrow>
+      <H1>Despachos</H1>
+
+      <Card style={{ marginTop: 20, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#6B6659', marginRight: 4 }}>¿Compraron equipo nuevo?</span>
+        <Btn variant="ghost" onClick={() => addUnit('camion')}><Truck size={14} /> Agregar camión mixer</Btn>
+        <Btn variant="ghost" onClick={() => addUnit('bomba')}><PumpIcon size={14} /> Agregar camión-bomba</Btn>
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginTop: 16 }}>
+        {data.fleet.map(u => {
+          const disp = data.dispatches[u.id]; const status = disp ? disp.status : 'disponible';
+          const order = disp && data.orders.find(o => o.id === disp.orderId);
+          const UIcon = u.type === 'bomba' ? PumpIcon : Truck;
+          return (
+            <Card key={u.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                {editingUnit === u.id ? (
+                  <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                    <input autoFocus style={{ ...inputStyle, fontSize: 13, padding: '5px 8px' }} value={nameInput}
+                      onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveEdit(u.id)} />
+                    <Btn variant="accent" onClick={() => saveEdit(u.id)} style={{ padding: '5px 8px' }}><Check size={13} /></Btn>
+                    <Btn variant="ghost" onClick={() => setEditingUnit(null)} style={{ padding: '5px 8px' }}><X size={13} /></Btn>
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 22, color: '#2A2724', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                       onClick={() => startEdit(u)} title="Editar nombre">
+                    {unitLabel(u)}
+                  </div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <UIcon size={20} color={STATUS_COLORS[status]} />
+                  {status === 'disponible' && (
+                    <button onClick={() => removeUnit(u.id)} title="Quitar unidad" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginBottom: 12 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLORS[status] }} />
+                <span style={{ fontSize: 12, textTransform: 'capitalize', color: '#6B6659' }}>{status}</span>
+              </div>
+              {order && <div style={{ fontSize: 12, color: '#6B6659', marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace" }}>{order.id} · {order.volumeM3} m³ · {order.recipeName}</div>}
+              {!disp && (
+                <select style={inputStyle} defaultValue="" onChange={e => e.target.value && assign(u.id, e.target.value)}>
+                  <option value="">Asignar orden…</option>
+                  {pendingOrders.map(o => <option key={o.id} value={o.id}>{o.id} · {o.volumeM3} m³</option>)}
+                </select>
+              )}
+              {disp && (
+                <Btn variant="ghost" onClick={() => advance(u.id)}>
+                  {status === FINAL_STATUS[u.type] ? 'Liberar unidad' : `Marcar: ${FLOW[u.type][status]}`}
+                  <ChevronRight size={14} />
+                </Btn>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+      {pendingOrders.length === 0 && <div style={{ marginTop: 16, fontSize: 13, color: '#8C8880' }}>No hay órdenes producidas pendientes de despacho. Registra una en la pestaña Producción.</div>}
+    </div>
+  );
+}
+
+function Mantenimiento({ data, setData }) {
+  const empty = { unitId: data.fleet[0]?.id || '', fecha: todayStr(), tipo: 'Preventivo', descripcion: '', taller: '', costo: '', kilometraje: '', proximaFecha: '' };
+  const [form, setForm] = useState(empty);
+  const [error, setError] = useState('');
+
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const add = () => {
+    if (!form.unitId) { setError('Selecciona una unidad.'); return; }
+    if (!form.descripcion.trim()) { setError('Describe el trabajo realizado.'); return; }
+    const id = `MT-${String(data.nextMaintNum).padStart(4, '0')}`;
+    setData(d => ({
+      ...d,
+      nextMaintNum: d.nextMaintNum + 1,
+      maintenance: [...d.maintenance, {
+        id, unitId: form.unitId, fecha: form.fecha, tipo: form.tipo, descripcion: form.descripcion.trim(),
+        taller: form.taller.trim(), costo: form.costo ? parseFloat(form.costo) : null,
+        kilometraje: form.kilometraje ? parseFloat(form.kilometraje) : null, proximaFecha: form.proximaFecha || null,
+      }],
+    }));
+    setForm({ ...empty, unitId: form.unitId });
+    setError('');
+  };
+
+  const remove = (id) => setData(d => ({ ...d, maintenance: d.maintenance.filter(m => m.id !== id) }));
+
+  const today = todayStr();
+  const in7days = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const dueSoon = data.maintenance.filter(m => m.proximaFecha && m.proximaFecha <= in7days);
+  const unitName = (id) => { const u = data.fleet.find(u => u.id === id); return u ? unitLabel(u) : '—'; };
+
+  return (
+    <div>
+      <Eyebrow>Control mecánico</Eyebrow>
+      <H1>Mantenimiento</H1>
+
+      {dueSoon.length > 0 && (
+        <Card style={{ marginTop: 16, borderColor: '#E3B4A6', background: '#FBF3EF' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#B54834', fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+            <AlertTriangle size={15} /> Próximos servicios (7 días o vencidos)
+          </div>
+          {dueSoon.map(m => (
+            <div key={m.id} style={{ fontSize: 12, color: '#6B6659' }}>
+              {unitName(m.unitId)} · {m.descripcion} · próximo: {m.proximaFecha} {m.proximaFecha < today ? '(vencido)' : ''}
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1fr 1.4fr' : '1fr', gap: 16, marginTop: 16 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Nuevo registro</div>
+          <Field label="Unidad">
+            <select style={inputStyle} value={form.unitId} onChange={set('unitId')}>
+              {data.fleet.map(u => <option key={u.id} value={u.id}>{unitLabel(u)}</option>)}
+            </select>
+          </Field>
+          <Field label="Fecha">
+            <input type="date" style={inputStyle} value={form.fecha} onChange={set('fecha')} />
+          </Field>
+          <Field label="Tipo de servicio">
+            <select style={inputStyle} value={form.tipo} onChange={set('tipo')}>
+              <option>Preventivo</option>
+              <option>Correctivo</option>
+              <option>Llantas</option>
+              <option>Revisión</option>
+            </select>
+          </Field>
+          <Field label="Descripción del trabajo">
+            <input style={inputStyle} value={form.descripcion} onChange={set('descripcion')} placeholder="ej. cambio de aceite y filtros" />
+          </Field>
+          <Field label="Taller / mecánico">
+            <input style={inputStyle} value={form.taller} onChange={set('taller')} />
+          </Field>
+          <Field label="Costo (opcional)">
+            <input type="number" min="0" style={inputStyle} value={form.costo} onChange={set('costo')} placeholder="Q" />
+          </Field>
+          <Field label="Kilometraje / horas (opcional)">
+            <input type="number" min="0" style={inputStyle} value={form.kilometraje} onChange={set('kilometraje')} />
+          </Field>
+          <Field label="Próximo servicio (opcional)">
+            <input type="date" style={inputStyle} value={form.proximaFecha} onChange={set('proximaFecha')} />
+          </Field>
+          {error && <div style={{ color: '#B54834', fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          <Btn variant="accent" onClick={add}><Plus size={14} /> Guardar registro</Btn>
+        </Card>
+
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Historial</div>
+          {data.maintenance.length === 0 && <div style={{ color: '#8C8880', fontSize: 13 }}>Aún no hay registros de mantenimiento.</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[...data.maintenance].reverse().map(m => (
+              <div key={m.id} style={{ border: '1px solid #EFEBE0', borderRadius: 4, padding: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#2A2724' }}>{unitName(m.unitId)} · {m.tipo}</div>
+                    <div style={{ fontSize: 12, color: '#8C8880' }}>{m.fecha}{m.taller ? ` · ${m.taller}` : ''}</div>
+                  </div>
+                  <button onClick={() => remove(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={15} /></button>
+                </div>
+                <div style={{ fontSize: 12, color: '#6B6659', marginTop: 4 }}>{m.descripcion}</div>
+                <div style={{ fontSize: 11, color: '#8C8880', marginTop: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
+                  {m.costo != null ? `Q${m.costo.toFixed(2)} · ` : ''}{m.kilometraje != null ? `${m.kilometraje} km/hrs · ` : ''}{m.proximaFecha ? `próximo: ${m.proximaFecha}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Clientes({ data, setData }) {
+  const [form, setForm] = useState({ name: '', obra: '' });
+  const add = () => { if (!form.name.trim()) return; setData(d => ({ ...d, clients: [...d.clients, { id: `c${Date.now()}`, name: form.name, obra: form.obra }] })); setForm({ name: '', obra: '' }); };
+  const remove = (id) => setData(d => ({ ...d, clients: d.clients.filter(c => c.id !== id) }));
+
+  return (
+    <div>
+      <Eyebrow>Cartera</Eyebrow>
+      <H1>Clientes</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1fr 1.4fr' : '1fr', gap: 16, marginTop: 20 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Nuevo cliente</div>
+          <Field label="Nombre / empresa"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
+          <Field label="Obra / proyecto"><input style={inputStyle} value={form.obra} onChange={e => setForm(f => ({ ...f, obra: e.target.value }))} /></Field>
+          <Btn variant="accent" onClick={add}><Plus size={14} /> Agregar</Btn>
+        </Card>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 10 }}>Clientes registrados</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.clients.map(c => (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #EFEBE0', paddingBottom: 8 }}>
+                <div><div style={{ fontWeight: 600 }}>{c.name}</div><div style={{ fontSize: 12, color: '#8C8880' }}>{c.obra}</div></div>
+                <button onClick={() => remove(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={15} /></button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Reportes({ data }) {
+  const byDate = useMemo(() => { const map = {}; data.orders.forEach(o => { map[o.date] = (map[o.date] || 0) + Number(o.volumeM3); }); return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0])); }, [data.orders]);
+  const totalM3 = data.orders.reduce((s, o) => s + Number(o.volumeM3), 0);
+  const byRecipe = useMemo(() => { const map = {}; data.orders.forEach(o => { map[o.recipeName] = (map[o.recipeName] || 0) + Number(o.volumeM3); }); return Object.entries(map); }, [data.orders]);
+  const maxDay = Math.max(1, ...byDate.map(([, v]) => v));
+
+  return (
+    <div>
+      <Eyebrow>Histórico</Eyebrow>
+      <H1>Reportes</H1>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 20 }}>
+        <StatCard label="m³ totales producidos" value={totalM3.toFixed(1)} icon={Gauge} />
+        <StatCard label="Órdenes totales" value={data.orders.length} icon={Layers} />
+        <StatCard label="Clientes activos" value={data.clients.length} icon={Users} />
+      </div>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 12 }}>Producción por día (m³)</div>
+        {byDate.length === 0 && <div style={{ color: '#8C8880', fontSize: 13 }}>Sin datos aún.</div>}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', height: 140 }}>
+          {byDate.map(([date, v]) => (
+            <div key={date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+              <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", marginBottom: 4 }}>{v.toFixed(1)}</div>
+              <div style={{ width: '70%', background: '#F2A900', height: `${(v / maxDay) * 100}px`, borderRadius: '2px 2px 0 0' }} />
+              <div style={{ fontSize: 10, color: '#8C8880', marginTop: 4 }}>{date.slice(5)}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 12 }}>m³ por tipo de mezcla</div>
+        {byRecipe.length === 0 && <div style={{ color: '#8C8880', fontSize: 13 }}>Sin datos aún.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {byRecipe.map(([name, v]) => (
+            <div key={name}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                <span style={{ fontWeight: 600 }}>{name}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{v.toFixed(1)} m³</span>
+              </div>
+              <div style={{ height: 8, background: '#E5E1D6', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ width: `${(v / totalM3) * 100}%`, height: '100%', background: '#2A2724' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function buildWorkbook(data) {
+  const wb = XLSX.utils.book_new();
+
+  const invRows = Object.entries(data.inventory).map(([id, v]) => ({
+    id, nombre: v.label, unidad: v.unit, cantidad_actual: v.qty, cantidad_minima: v.min, color_hex: v.color,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(invRows), 'Inventario');
+
+  const recRows = data.recipes.map(r => ({
+    id: r.id, nombre: r.name, cemento_kg_m3: r.cemento, arena_m3_m3: r.arena, grava_m3_m3: r.grava,
+    agua_l_m3: r.agua, aditivo_nombre: r.aditivoNombre || '', aditivo_l_m3: r.aditivo,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(recRows), 'Recetas');
+
+  const cliRows = data.clients.map(c => ({ id: c.id, nombre: c.name, obra: c.obra, telefono: '', contacto: '' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cliRows), 'Clientes');
+
+  const ordRows = data.orders.map(o => ({
+    id: o.id, fecha: o.date, receta_id: o.recipeId, cliente_id: o.clientId || '', volumen_m3: o.volumeM3, estado: o.status,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ordRows), 'Ordenes');
+
+  const fleetRows = data.fleet.map(u => ({ id: u.id, tipo: u.type, numero: u.num, nombre: u.name || '' }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fleetRows), 'Flota');
+
+  const dispRows = data.fleet.map(u => {
+    const d = data.dispatches[u.id];
+    return {
+      unidad_id: u.id, orden_id: d ? d.orderId : '', estado: d ? d.status : 'disponible',
+      hora_asignacion: d ? new Date(d.since).toLocaleString() : '', hora_entrega: '',
+    };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dispRows), 'Despachos');
+
+  const maintRows = data.maintenance.map(m => ({
+    id: m.id, unidad_id: m.unitId, fecha: m.fecha, tipo: m.tipo, descripcion: m.descripcion, taller: m.taller,
+    costo_q: m.costo ?? '', kilometraje_horas: m.kilometraje ?? '', proxima_fecha: m.proximaFecha || '',
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(maintRows), 'Mantenimiento');
+
+  return wb;
+}
+
+async function importWorkbook(file, setData) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheet = (name) => wb.Sheets[name] ? XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' }) : [];
+
+  const invRows = sheet('Inventario');
+  const recRows = sheet('Recetas');
+  const cliRows = sheet('Clientes');
+  const ordRows = sheet('Ordenes');
+  const fleetRows = sheet('Flota');
+  const dispRows = sheet('Despachos');
+  const maintRows = sheet('Mantenimiento');
+
+  setData(d => {
+    const inventory = { ...d.inventory };
+    invRows.forEach(r => {
+      if (!r.id) return;
+      inventory[r.id] = {
+        label: r.nombre || r.id, unit: r.unidad || '', qty: Number(r.cantidad_actual) || 0,
+        min: Number(r.cantidad_minima) || 0, color: r.color_hex || (inventory[r.id] ? inventory[r.id].color : '#8C8880'),
+      };
+    });
+
+    const recipes = recRows.filter(r => r.id).map(r => ({
+      id: String(r.id), name: r.nombre || r.id, cemento: Number(r.cemento_kg_m3) || 0,
+      arena: Number(r.arena_m3_m3) || 0, grava: Number(r.grava_m3_m3) || 0, agua: Number(r.agua_l_m3) || 0,
+      aditivoNombre: r.aditivo_nombre || '', aditivo: Number(r.aditivo_l_m3) || 0,
+    }));
+
+    const clients = cliRows.filter(r => r.id).map(r => ({ id: String(r.id), name: r.nombre || '', obra: r.obra || '' }));
+
+    const orders = ordRows.filter(r => r.id).map(r => ({
+      id: String(r.id), date: String(r.fecha), recipeId: r.receta_id,
+      recipeName: (recipes.find(x => x.id === r.receta_id) || {}).name || '',
+      clientId: r.cliente_id || null, volumeM3: Number(r.volumen_m3) || 0, status: r.estado || 'producido',
+    }));
+
+    const fleet = fleetRows.filter(r => r.id).map(r => ({
+      id: String(r.id), type: r.tipo === 'bomba' ? 'bomba' : 'camion', num: Number(r.numero) || 0, name: r.nombre || '',
+    }));
+
+    const dispatches = {};
+    dispRows.forEach(r => {
+      if (r.unidad_id && r.orden_id) dispatches[r.unidad_id] = { orderId: r.orden_id, status: r.estado || 'disponible', since: Date.now() };
+    });
+
+    const maintenance = maintRows.filter(r => r.id).map(r => ({
+      id: String(r.id), unitId: r.unidad_id, fecha: String(r.fecha), tipo: r.tipo || 'Preventivo',
+      descripcion: r.descripcion || '', taller: r.taller || '',
+      costo: r.costo_q === '' ? null : Number(r.costo_q),
+      kilometraje: r.kilometraje_horas === '' ? null : Number(r.kilometraje_horas),
+      proximaFecha: r.proxima_fecha || null,
+    }));
+
+    const numFromId = (id) => parseInt(String(id || '').replace(/\D/g, ''), 10) || 0;
+    const maxOrderNum = orders.reduce((m, o) => Math.max(m, numFromId(o.id)), 0);
+    const maxMaintNum = maintenance.reduce((m, x) => Math.max(m, numFromId(x.id)), 0);
+    const maxCamionNum = fleet.filter(u => u.type === 'camion').reduce((m, u) => Math.max(m, u.num), 0);
+    const maxBombaNum = fleet.filter(u => u.type === 'bomba').reduce((m, u) => Math.max(m, u.num), 0);
+
+    return {
+      ...d,
+      inventory,
+      recipes: recipes.length ? recipes : d.recipes,
+      clients: clients.length ? clients : d.clients,
+      orders: orders.length ? orders : d.orders,
+      fleet: fleet.length ? fleet : d.fleet,
+      dispatches,
+      maintenance,
+      nextOrderNum: maxOrderNum + 1,
+      nextMaintNum: maxMaintNum + 1,
+      nextCamionNum: maxCamionNum + 1,
+      nextBombaNum: maxBombaNum + 1,
+    };
+  });
+}
+
+function Datos({ data, setData }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = React.useRef(null);
+
+  const doExport = () => {
+    const wb = buildWorkbook(data);
+    XLSX.writeFile(wb, `occicon-salcaja-datos-${todayStr()}.xlsx`);
+  };
+
+  const onFileChosen = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      await importWorkbook(file, setData);
+      setStatus({ ok: true, msg: 'Datos importados correctamente desde el Excel.' });
+    } catch (err) {
+      setStatus({ ok: false, msg: 'No se pudo leer el archivo. Verifica que sea un .xlsx con las mismas pestañas y encabezados de la plantilla.' });
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <Eyebrow>Excel ↔ App</Eyebrow>
+      <H1>Datos</H1>
+
+      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 800 ? '1fr 1fr' : '1fr', gap: 16, marginTop: 20 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Exportar a Excel</div>
+          <div style={{ fontSize: 12, color: '#8C8880', marginBottom: 12 }}>
+            Descarga todo lo que tienes cargado ahora mismo (inventario, recetas, clientes, órdenes, flota, despachos y mantenimiento) en un archivo .xlsx con la misma estructura de la plantilla.
+          </div>
+          <Btn variant="accent" onClick={doExport}><FileSpreadsheet size={14} /> Descargar Excel</Btn>
+        </Card>
+
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Importar desde Excel</div>
+          <div style={{ fontSize: 12, color: '#8C8880', marginBottom: 12 }}>
+            Sube un .xlsx con la misma estructura de la plantilla (pestañas: Inventario, Recetas, Clientes, Ordenes, Flota, Despachos, Mantenimiento). Esto <strong>reemplaza</strong> los datos actuales de la app por los del archivo.
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx" onChange={onFileChosen} disabled={busy}
+                 style={{ fontSize: 13, marginBottom: 10 }} />
+          {busy && <div style={{ fontSize: 12, color: '#8C8880' }}>Importando…</div>}
+          {status && (
+            <div style={{ fontSize: 12, color: status.ok ? '#4B7B5E' : '#B54834', marginTop: 6 }}>{status.msg}</div>
+          )}
+        </Card>
+      </div>
+
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Cómo funciona esta conexión</div>
+        <div style={{ fontSize: 12, color: '#6B6659', lineHeight: 1.6 }}>
+          Esto no es una sincronización automática en vivo — es manual, en ambos sentidos. Exporta cuando quieras un respaldo
+          o para editar datos masivamente en Excel; importa cuando quieras que esos cambios entren a la app. Para que varios
+          dispositivos vean lo mismo en tiempo real sin pasos manuales, se necesitaría una base de datos en la nube (ej. Supabase)
+          en vez de un archivo Excel.
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
