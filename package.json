@@ -1,0 +1,12 @@
+{
+  "name": "occicon-build",
+  "private": true,
+  "description": "Solo compila index.html para quitar Babel del navegador. No es una app de Node normal.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.7",
+    "@babel/preset-react": "^7.24.7"
+  }
+}
