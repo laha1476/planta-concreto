@@ -108,7 +108,7 @@ html, body { background:#F4F6F5; color:#17251D; }
 /* ===== CELULAR (≤700px): app tipo nativa con barra inferior ===== */
 .executive-bottom-nav, .executive-sheet-wrap { display:none }
 @media(max-width:700px){
-  html, body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+  html, body { -webkit-tap-highlight-color: transparent; }
   body { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
   .executive-mobile-nav { display:none !important }
   .executive-header { padding: calc(10px + env(safe-area-inset-top)) 14px 10px !important; border-bottom-width:3px !important; flex-wrap:nowrap !important; gap:8px !important; position:sticky; top:0; }
@@ -1526,7 +1526,7 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
       <header className="executive-header" style={{ background: '#10221B', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #07E55E', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <img src={`data:image/png;base64,${LOGO_B64}`} alt="Occicon" style={{ height: 44, display: 'block' }} />
-          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-02-0010</div>
+          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-11-1200</div>
         </div>
         <div className="executive-header-tools" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {(plants.length > 1 || isAdmin) && (
