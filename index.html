@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Occicon" />
 <meta name="theme-color" content="#10221B" />
 <title>Occicon Salcajá · Control de Operación</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800;900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800;900&family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
 <script>window.React || document.write('<script crossorigin src="https:\/\/unpkg.com\/react@18.3.1\/umd\/react.production.min.js"><\/script>')</script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
@@ -703,7 +703,7 @@ function normalizeData(d) {
     });
 
   const clients = (Array.isArray(d.clients) ? d.clients : def.clients)
-    .map(c => ({ telefono: '', estado: 'Cliente activo', seguimiento: [], proximoSeguimiento: null, ubicacion: '', ...c, seguimiento: Array.isArray(c.seguimiento) ? c.seguimiento : [] }));
+    .map(c => ({ telefono: '', estado: 'Cliente activo', seguimiento: [], proximoSeguimiento: null, ubicacion: '', codigo: '', ...c, seguimiento: Array.isArray(c.seguimiento) ? c.seguimiento : [] }));
 
   const quotes = (Array.isArray(d.quotes) ? d.quotes : [])
     .map(q => ({
@@ -804,6 +804,9 @@ function normalizeFleetData(d) {
     plants,
     nextCamionNum: typeof d.nextCamionNum === 'number' ? d.nextCamionNum : maxCamionNum + 1,
     nextBombaNum: typeof d.nextBombaNum === 'number' ? d.nextBombaNum : maxBombaNum + 1,
+    // Correlativo de envíos electrónicos (compartido por todas las plantas). Arranca en 3451.
+    envioNext: Number.isFinite(Number(d.envioNext)) && Number(d.envioNext) > 0 ? Math.floor(Number(d.envioNext)) : 3451,
+    envios: Array.isArray(d.envios) ? d.envios : [],
   };
 }
 
@@ -1240,6 +1243,12 @@ function localDateToStr(d) {
 function todayStr() { return localDateToStr(new Date()); }
 // Materiales que una orden realmente consumió. Las órdenes nuevas guardan una copia exacta
 // (materialesConsumidos); las antiguas no la tienen y se calculan con la receta actual.
+// Normaliza un nombre igual que public.norm_nombre() en Supabase (sin mayúsculas, acentos ni espacios dobles).
+function normNombre(t) {
+  const from = 'áàäâéèëêíìïîóòöôúùüûñ', to = 'aaaaeeeeiiiioooouuuun';
+  return String(t || '').toLowerCase().replace(/./g, ch => { const i = from.indexOf(ch); return i >= 0 ? to[i] : ch; }).replace(/\s+/g, ' ').trim();
+}
+
 function consumoDeOrden(o, recipes) {
   if (o && o.materialesConsumidos && typeof o.materialesConsumidos === 'object') return { ...o.materialesConsumidos };
   const r = (recipes || []).find(x => x.id === (o || {}).recipeId);
@@ -1502,6 +1511,32 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
   const [searchOpen, setSearchOpen] = useState(false);
   const [plantMenuOpen, setPlantMenuOpen] = useState(false);
 
+  // Códigos de cliente: los entrega Supabase (misma empresa → mismo código en todas las plantas, sin repetirse).
+  const codigosBusy = React.useRef(false);
+  const sinCodigoKey = data ? (data.clients || []).filter(c => !c.codigo && normNombre(c.name)).map(c => c.id).join(',') : '';
+  useEffect(() => {
+    if (!data || archived || !sinCodigoKey || codigosBusy.current) return;
+    const pend = (data.clients || []).filter(c => !c.codigo && normNombre(c.name));
+    if (!pend.length) return;
+    codigosBusy.current = true;
+    (async () => {
+      try {
+        let mapa = {};
+        if (SUPABASE_ENABLED && supabaseClient) {
+          const { data: res, error } = await supabaseClient.rpc('codigos_clientes_lote', { p_nombres: pend.map(c => c.name) });
+          if (error) throw error;
+          (res || []).forEach(r => { mapa[normNombre(r.nombre)] = r.codigo; });
+        } else {
+          // modo local (sin nube): correlativo local por nombre
+          let n = (data.clients || []).reduce((m, c) => { const x = /^CL-(\d+)$/.exec(c.codigo || ''); return x ? Math.max(m, +x[1]) : m; }, 0);
+          pend.forEach(c => { const k = normNombre(c.name); if (!mapa[k]) { n += 1; mapa[k] = 'CL-' + String(n).padStart(3, '0'); } });
+        }
+        setData(d => ({ ...d, clients: d.clients.map(c => (!c.codigo && mapa[normNombre(c.name)]) ? { ...c, codigo: mapa[normNombre(c.name)] } : c) }));
+      } catch (e) { console.warn('No se pudieron asignar códigos de cliente:', e && e.message); }
+      finally { setTimeout(() => { codigosBusy.current = false; }, 4000); }
+    })();
+  }, [sinCodigoKey, archived]);
+
   if (!data) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', justifyContent: 'center', background: '#F4F6F5', fontFamily: "'Inter', sans-serif", color: '#68786F', padding: 24, textAlign: 'center' }}>
@@ -1516,6 +1551,10 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
   const visibleNav = NAV.filter(n => isAdmin || (auth.profile && auth.profile.permissions && auth.profile.permissions[n.id]))
     .concat(isAdmin ? [{ id: 'usuarios', label: 'Usuarios', icon: ShieldUser }, { id: 'auditoria', label: 'Auditoría', icon: History }] : []);
 
+  const perms = (auth.profile && auth.profile.permissions) || {};
+  const sinPrecios = !isAdmin && !!perms.sinPrecios;           // dosificador: no ve precios/costos/utilidades
+  const repSoloProduccion = !isAdmin && !!perms.repSoloProduccion; // reportes limitados a producción
+  const noBorrar = !isAdmin && !!perms.noBorrar;                // no puede eliminar órdenes
   const activeTab = visibleNav.some(n => n.id === tab) ? tab : (visibleNav[0] ? visibleNav[0].id : 'dashboard');
 
   const isOffline = syncMode.startsWith('sin conexión');
@@ -1526,7 +1565,7 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
       <header className="executive-header" style={{ background: '#10221B', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #07E55E', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <img src={`data:image/png;base64,${LOGO_B64}`} alt="Occicon" style={{ height: 44, display: 'block' }} />
-          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-11-1200</div>
+          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2230</div>
         </div>
         <div className="executive-header-tools" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {(plants.length > 1 || isAdmin) && (
@@ -1640,18 +1679,18 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
 
       <main className="executive-main" style={{ padding: 24, maxWidth: 1500, margin: '0 auto' }}>
         {activeTab === 'dashboard' && <Dashboard data={data} sharedFleet={sharedFleet} plantId={plantId} setTab={setTab} />}
-        {activeTab === 'inventario' && <Inventario data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
+        {activeTab === 'inventario' && <Inventario data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} sinPrecios={sinPrecios} />}
         {activeTab === 'disenos' && <DisenosMezcla data={data} setData={setData} />}
-        {activeTab === 'produccion' && <Produccion data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
+        {activeTab === 'produccion' && <Produccion data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} sinPrecios={sinPrecios} noBorrar={noBorrar} />}
         {activeTab === 'cotizaciones' && <Cotizaciones data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} setTab={setTab} soloPropios={!isAdmin && !!(auth.profile && auth.profile.permissions && auth.profile.permissions.soloPropios)} />}
-        {activeTab === 'despachos' && <Despachos data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} setTab={setTab} sharedFleet={sharedFleet} setSharedFleet={setSharedFleet} plantId={plantId} soloPropios={!isAdmin && !!(auth.profile && auth.profile.permissions && auth.profile.permissions.soloPropios)} />}
+        {activeTab === 'despachos' && <Despachos data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} setTab={setTab} sharedFleet={sharedFleet} setSharedFleet={setSharedFleet} plantId={plantId} isAdmin={isAdmin} soloPropios={!isAdmin && !!(auth.profile && auth.profile.permissions && auth.profile.permissions.soloPropios)} />}
         {activeTab === 'mantenimiento' && <Mantenimiento data={data} setData={setData} sharedFleet={sharedFleet} setSharedFleet={setSharedFleet} plantId={plantId} />}
         {activeTab === 'calidad' && <Calidad data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
-        {activeTab === 'clientes' && <Clientes data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} soloPropios={!isAdmin && !!(auth.profile && auth.profile.permissions && auth.profile.permissions.soloPropios)} />}
+        {activeTab === 'clientes' && <Clientes data={data} setData={setData} isAdmin={isAdmin} username={auth.profile ? auth.profile.username : ''} soloPropios={!isAdmin && !!(auth.profile && auth.profile.permissions && auth.profile.permissions.soloPropios)} />}
         {activeTab === 'proveedores' && <Proveedores data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
         {activeTab === 'facturas' && <Facturas data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
         {activeTab === 'conciliacion' && <Conciliacion data={data} setData={setData} />}
-        {activeTab === 'reportes' && <Reportes data={data} setData={setData} isOffline={isOffline} />}
+        {activeTab === 'reportes' && (repSoloProduccion ? <ReportesProduccion data={data} isOffline={isOffline} /> : <Reportes data={data} setData={setData} isOffline={isOffline} />)}
         {activeTab === 'datos' && <Datos data={data} setData={setData} plantId={plantId} sharedFleet={sharedFleet} />}
         {activeTab === 'papelera' && <Papelera data={data} setData={setData} username={auth.profile ? auth.profile.username : ''} />}
         {activeTab === 'usuarios' && <Usuarios username={auth.profile ? auth.profile.username : ''} data={data} setData={setData} />}
@@ -2152,7 +2191,7 @@ function SiloBar({ v }) {
   );
 }
 
-function Inventario({ data, setData, username }) {
+function Inventario({ data, setData, username, sinPrecios }) {
   const [editing, setEditing] = useState(null);
   const [amount, setAmount] = useState('');
   const [priceAmount, setPriceAmount] = useState('');
@@ -2165,7 +2204,7 @@ function Inventario({ data, setData, username }) {
 
   const applyAmount = (key) => {
     const delta = parseFloat(amount);
-    const price = parseFloat(priceAmount);
+    const price = sinPrecios ? NaN : parseFloat(priceAmount);
     if (isNaN(delta)) { setEditing(null); setAmount(''); setPriceAmount(''); return; }
     const label = data.inventory[key].label;
     const disponible = data.inventory[key].qty;
@@ -2263,9 +2302,9 @@ function Inventario({ data, setData, username }) {
           <Btn variant="accent" onClick={() => setShowAdd(s => !s)} style={{ justifyContent: 'center' }}><Plus size={14} /> Nuevo material</Btn>
         </div>
       </div>
-      <div style={{ fontSize: 12, color: '#68786F', marginTop: 6 }}>
+      {!sinPrecios && <div style={{ fontSize: 12, color: '#68786F', marginTop: 6 }}>
         El costo por unidad se recalcula solo (promedio ponderado) cada vez que registras una recepción con precio.
-      </div>
+      </div>}
 
       {showAdd && (
         <Card style={{ marginTop: 16 }}>
@@ -2321,7 +2360,7 @@ function Inventario({ data, setData, username }) {
             </div>
             <div style={{ fontSize: 11, color: '#68786F', marginBottom: 6 }}>mínimo: {v.min} {v.unit}</div>
 
-            {editingCost === key ? (
+            {sinPrecios ? null : editingCost === key ? (
               <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
                 <input autoFocus type="number" min="0" step="0.01" value={costAmount} onChange={e => setCostAmount(e.target.value)}
                   placeholder="Q por unidad" style={{ ...inputStyle, flex: 1 }} />
@@ -2339,7 +2378,7 @@ function Inventario({ data, setData, username }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <input autoFocus type="number" value={amount} onChange={e => { setAmount(e.target.value); setAdjError(''); }} placeholder="cantidad (+ recibido / - ajuste)" style={inputStyle} />
                 {adjError && <div style={{ fontSize: 12, color: '#B54834', background: '#FDECE8', border: '1px solid #E3B7AE', borderRadius: 6, padding: '6px 8px' }}>{adjError}</div>}
-                <input type="number" min="0" step="0.01" value={priceAmount} onChange={e => setPriceAmount(e.target.value)} placeholder="precio pagado por unidad (si recibiste)" style={inputStyle} />
+                {!sinPrecios && <input type="number" min="0" step="0.01" value={priceAmount} onChange={e => setPriceAmount(e.target.value)} placeholder="precio pagado por unidad (si recibiste)" style={inputStyle} />}
                 <div style={{ display: 'flex', gap: 6 }}>
                   <Btn variant="accent" onClick={() => applyAmount(key)} style={{ flex: 1, justifyContent: 'center' }}><Check size={14} /> Guardar</Btn>
                   <Btn variant="ghost" onClick={() => { setEditing(null); setAmount(''); setPriceAmount(''); setAdjError(''); }}><X size={14} /></Btn>
@@ -2608,7 +2647,7 @@ function DisenosMezcla({ data, setData }) {
   );
 }
 
-function Produccion({ data, setData, username }) {
+function Produccion({ data, setData, username, sinPrecios, noBorrar }) {
   const [form, setForm] = useState({ recipeId: data.recipes[0]?.id || '', clientId: '', volumeM3: '', vendedor: '', pctVendedor: '', distanciaKm: '', pctDistancia: '', precioDiesel: '', esReposicion: false, notasReposicion: '' });
   const [error, setError] = useState('');
   const [showDieselConfig, setShowDieselConfig] = useState(false);
@@ -2674,6 +2713,7 @@ function Produccion({ data, setData, username }) {
   };
 
   const removeOrder = (o) => {
+    if (noBorrar) return;
     if (!window.confirm(`¿Eliminar la orden ${o.id}? El material consumido se devuelve al inventario.`)) return;
     setData(d => {
       const inventory = { ...d.inventory };
@@ -2764,11 +2804,11 @@ function Produccion({ data, setData, username }) {
         <Card>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <div style={{ fontWeight: 700 }}>Nueva orden</div>
-            <button onClick={() => setShowDieselConfig(s => !s)} title="Configurar precio y fórmula de diesel" style={{ background: 'none', border: '1px solid #C3D1C7', borderRadius: 3, cursor: 'pointer', color: showDieselConfig ? '#07E55E' : '#68786F', padding: 6, display: 'flex' }}>
+            {sinPrecios ? null : <button onClick={() => setShowDieselConfig(s => !s)} title="Configurar precio y fórmula de diesel" style={{ background: 'none', border: '1px solid #C3D1C7', borderRadius: 3, cursor: 'pointer', color: showDieselConfig ? '#07E55E' : '#68786F', padding: 6, display: 'flex' }}>
               <Settings size={14} />
-            </button>
+            </button>}
           </div>
-          {showDieselConfig && (
+          {!sinPrecios && showDieselConfig && (
             <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #D3DFD6' }}>
               <div style={{ fontSize: 12, color: '#68786F', marginBottom: 10 }}>
                 Galones de diesel = ((distancia_km × coeficiente por km) + coeficiente base) × volumen (m³). El costo se calcula multiplicando esos galones por el precio del galón.
@@ -2800,6 +2840,7 @@ function Produccion({ data, setData, username }) {
           <Field label="Volumen (m³)">
             <input type="number" min="0" style={inputStyle} value={form.volumeM3} onChange={e => setForm(f => ({ ...f, volumeM3: e.target.value }))} placeholder="ej. 7" />
           </Field>
+          {!sinPrecios && (<>
           <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 500 ? '1fr 1fr' : '1fr', gap: 8 }}>
             <Field label="Distancia a la obra (km, opcional)">
               <input type="number" min="0" style={inputStyle} value={form.distanciaKm} onChange={e => setForm(f => ({ ...f, distanciaKm: e.target.value }))} placeholder="ej. 12" />
@@ -2822,6 +2863,7 @@ function Produccion({ data, setData, username }) {
               <input type="number" min="0" step="0.1" style={inputStyle} value={form.pctVendedor} onChange={e => setForm(f => ({ ...f, pctVendedor: e.target.value }))} placeholder="ej. 3" />
             </Field>
           </div>
+          </>)}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: 10, background: form.esReposicion ? 'rgba(242,169,0,0.1)' : 'none', border: form.esReposicion ? '1px solid #F2A900' : '1px solid #D3DFD6', borderRadius: 4 }}>
             <input type="checkbox" id="esReposicion" checked={form.esReposicion} onChange={e => setForm(f => ({ ...f, esReposicion: e.target.checked }))} style={{ width: 16, height: 16, flexShrink: 0 }} />
@@ -2838,7 +2880,7 @@ function Produccion({ data, setData, username }) {
           {needEntries.length > 0 && vol > 0 && (
             <div style={{ fontSize: 12, color: '#53665A', fontFamily: "'IBM Plex Mono', monospace", background: '#EEF3EF', padding: 10, borderRadius: 3, marginBottom: 10 }}>
               Consumo estimado: {needEntries.map(([k, v]) => `${v.toFixed(2)} ${materialUnit(k)} ${materialLabel(k)}`).join(' · ')}{dieselGalones > 0 && ` · ${dieselGalones.toFixed(2)} gal Diesel`}
-              {form.esReposicion ? (
+              {!sinPrecios && (form.esReposicion ? (
                 <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #D3DFD6' }}>
                   Sin cobro — se registra como pérdida: costo materiales <span style={{ color: '#B54834' }}>{fmtQ(costoEstimado)}</span>
                   {dieselCosto > 0 && <> + diesel <span style={{ color: '#B54834' }}>{fmtQ(dieselCosto)}</span></>}
@@ -2859,7 +2901,7 @@ function Produccion({ data, setData, username }) {
                     {' '}· Utilidad neta: <span style={{ color: utilidadEstimada >= 0 ? '#07E55E' : '#B54834' }}>{fmtQ(utilidadEstimada)}</span>
                   </div>
                 </>
-              )}
+              ))}
             </div>
           )}
           {faltantes.length > 0 && vol > 0 && (
@@ -2895,6 +2937,7 @@ function Produccion({ data, setData, username }) {
                     <Field label="Volumen (m³)">
                       <input type="number" min="0" style={inputStyle} value={editForm.volumeM3} onChange={e => setEditForm(f => ({ ...f, volumeM3: e.target.value }))} />
                     </Field>
+                    {!sinPrecios && (<>
                     <Field label="Distancia (km)">
                       <input type="number" min="0" style={inputStyle} value={editForm.distanciaKm} onChange={e => setEditForm(f => ({ ...f, distanciaKm: e.target.value }))} />
                     </Field>
@@ -2910,6 +2953,7 @@ function Produccion({ data, setData, username }) {
                     <Field label="% comisión vendedor">
                       <input type="number" min="0" step="0.1" style={inputStyle} value={editForm.pctVendedor} onChange={e => setEditForm(f => ({ ...f, pctVendedor: e.target.value }))} />
                     </Field>
+                    </>)}
                     {editError && <div style={{ color: '#B54834', fontSize: 12, marginBottom: 8 }}>{editError}</div>}
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Btn variant="accent" onClick={() => saveEditOrder(o)}><Check size={14} /> Guardar</Btn>
@@ -2930,16 +2974,16 @@ function Produccion({ data, setData, username }) {
                             ⚠ REPOSICIÓN — SIN COBRO{o.notasReposicion ? `: ${o.notasReposicion}` : ''}
                           </div>
                         )}
-                        {o.ingreso != null && <div style={{ fontSize: 11, color: '#68786F', fontFamily: "'IBM Plex Mono', monospace" }}>{fmtQ(o.ingreso)} ingreso · {fmtQ(o.utilidad)} utilidad{o.vendedor ? ` · ${o.vendedor}` : ''}</div>}
+                        {!sinPrecios && o.ingreso != null && <div style={{ fontSize: 11, color: '#68786F', fontFamily: "'IBM Plex Mono', monospace" }}>{fmtQ(o.ingreso)} ingreso · {fmtQ(o.utilidad)} utilidad{o.vendedor ? ` · ${o.vendedor}` : ''}</div>}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontWeight: 700 }}>{o.volumeM3} m³</div>
                       <span style={{ display: 'inline-block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: '#07E55E', background: 'rgba(7,229,94,0.12)', border: '1px solid rgba(7,229,94,0.3)', borderRadius: 20, padding: '2px 8px', marginBottom: 6 }}>{o.status}</span>
                       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                        <button onClick={() => setPrintingOrderId(o.id)} title="Imprimir / PDF" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#07E55E' }}><FileText size={14} /></button>
+                        {!sinPrecios && <button onClick={() => setPrintingOrderId(o.id)} title="Imprimir / PDF" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#07E55E' }}><FileText size={14} /></button>}
                         <button onClick={() => startEditOrder(o)} title="Editar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#53665A' }}><Pencil size={14} /></button>
-                        <button onClick={() => removeOrder(o)} title="Eliminar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={14} /></button>
+                        {!noBorrar && <button onClick={() => removeOrder(o)} title="Eliminar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={14} /></button>}
                       </div>
                     </div>
                   </div>
@@ -5048,7 +5092,261 @@ function Alquileres({ data, setData, username, sharedFleet, plantId }) {
   );
 }
 
-function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFleet, plantId, soloPropios }) {
+// ======================= ENVÍO (nota de entrega) =======================
+const ENVIO_DISC = 'OCCICON no se responsabiliza por los volúmenes finales colocados, ya que puede existir una variación por malos manejos de construcción. OCCICON no se responsabiliza por malos métodos de construcción. OCCICON no se responsabiliza por datos de ensayos realizados a nuestro concreto por segundas personas o empresas que no estén certificadas, ya que se desconoce los métodos de manejo con los cuales se realizan. OCCICON no se responsabiliza por daños en el concreto por desastres naturales. OCCICON no se responsabiliza por la calidad del concreto por cualquier atraso en la descarga del camión. OCCICON no se responsabiliza por atrasos que puedan tener la fundición por cualquier causa ajena a nuestro compromiso.';
+const ENVIO_COPIAS = ['Original: Cliente', 'Duplicado: Contabilidad', 'Triplicado: Archivo'];
+const hhmm = (ms) => ms ? new Date(ms).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+const ddmmyyyy = (ms) => { const d = ms ? new Date(ms) : new Date(); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
+const escHtml = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// HTML de una hoja (1282 × 854.5 px). Se captura y se coloca en media carta (8.5 × 5.5 in).
+function envioPageHtml(f, numero, copiaIdx) {
+  const lab = (t, x, cy) => `<div class="lb" style="left:${x}px;top:${cy - 12}px">${t}</div>`;
+  const ln = (x1, x2, y) => `<div class="ln" style="left:${x1}px;width:${x2 - x1}px;top:${y}px"></div>`;
+  const val = (t, x, cy, w, extra = '') => `<div class="vl" style="left:${x}px;top:${cy - 14}px;width:${w}px;${extra}">${escHtml(t)}</div>`;
+  const h = [];
+  h.push(`<img class="logo" src="data:image/png;base64,${LOGO_B64}">`);
+  h.push('<div class="addr"><span>Sector Porto Suelo Km. 188 Santa Rita,</span><span>Salcajá, Quetzaltenango.</span><b>Tels: 5199-8352</b></div>');
+  h.push(`<div class="envio"><span class="e1">ENVÍO</span><span class="e2">Nº ${escHtml(numero)}</span></div>`);
+  [['NOMBRE DEL CLIENTE:', 200, 207], ['PROYECTO:', 248, 255], ['DIRECCIÓN DE LA OBRA:', 296, 303], ['PLANTA DE CONCRETO:', 343, 351]].forEach(([t, cy, y]) => { h.push(lab(t, 32, cy)); h.push(ln(27, 728, y)); });
+  h.push(lab('CÓDIGO DE CAMIÓN:', 32, 383));
+  [['FECHA:', 198, 205], ['SALIDA DE PLANTA:', 244, 252], ['LLEGA A LA OBRA:', 292, 300], ['HORA DE DESCARGA:', 339, 348]].forEach(([t, cy, y]) => { h.push(lab(t, 745, cy)); h.push(ln(743, 1227, y)); });
+  h.push(lab('HORA FINALIZACION DESCARGA:', 745, 380));
+  h.push('<div class="vr" style="left:735px;top:223px;height:114px"></div>');
+  h.push('<div class="th"><b style="left:48px;width:160px;text-align:center">CANTIDAD</b><b style="left:160px;width:184px;text-align:center">UNIDAD</b><b style="left:290px;width:910px;text-align:center">DESCRIPCION DEL PRODUCTO</b></div>');
+  [464, 501, 538].forEach(y => h.push(ln(27, 1227, y)));
+  h.push('<div class="vr" style="left:187px;top:431px;height:109px"></div><div class="vr" style="left:317px;top:431px;height:109px"></div>');
+  h.push(lab('PILOTO:', 32, 570)); h.push(ln(27, 1227, 577));
+  h.push(lab('DOSIFICADOR:', 32, 606)); h.push(ln(27, 1227, 613));
+  h.push(lab('OBSERVACIONES:', 32, 641));
+  h.push('<div class="box" style="left:27px;top:652px;width:1205px;height:64px"></div>');
+  h.push(lab('RECIBI CONFORME NOMBRE:', 285, 671)); h.push(lab('FIRMA:', 847, 690));
+  h.push(`<div class="box disc" style="left:27px;top:722px;width:1205px;height:90px">${ENVIO_DISC}</div>`);
+  // valores
+  h.push(val(f.cliente, 275, 200, 450)); h.push(val(f.proyecto, 275, 248, 450)); h.push(val(f.direccion, 275, 296, 450)); h.push(val(f.planta, 275, 343, 450));
+  h.push(val(f.camion, 275, 383, 300, 'font-weight:700'));
+  h.push(val(f.fecha, 945, 198, 280)); h.push(val(f.salida, 945, 244, 280)); h.push(val(f.llegada, 945, 292, 280)); h.push(val(f.horaDescarga, 945, 339, 280));
+  h.push(val(f.horaFin, 1040, 380, 185));
+  h.push(val(f.cantidad, 27, 448, 160, 'text-align:center;font-weight:700')); h.push(val(f.unidad, 187, 448, 130, 'text-align:center')); h.push(val(f.descripcion, 335, 448, 880));
+  h.push(val(f.piloto, 150, 570, 1070)); h.push(val(f.dosificador, 235, 606, 985)); h.push(val(f.observaciones, 235, 641, 990, 'font-size:15px'));
+  const foot = ENVIO_COPIAS.map((c, i) => i === copiaIdx ? `<b style="color:#07A845">${c}</b>` : c).join(' / ');
+  h.push(`<div class="foot">${foot}</div>`);
+  const css = `.envp{position:relative;width:1282px;height:854.5px;background:#fff;font-family:'Poppins','Inter',Arial,sans-serif;color:#10221B;overflow:hidden}.envp>*{position:absolute}
+.envp .logo{left:40px;top:68px;width:180px}.envp .addr{left:241px;top:82px;display:flex;flex-direction:column;font-size:17.5px;font-weight:400;line-height:22px;color:#2F4338}
+.envp .addr b{font-size:15.5px;font-weight:700;color:#10221B;margin-top:1px;margin-left:2px}
+.envp .envio{left:783px;top:62px;width:447px;height:86px;border:1.6px solid #4D6055;border-radius:9px;box-sizing:border-box}
+.envp .e1{position:absolute;left:11px;top:14px;font-size:42px;font-weight:700;color:#10221B;letter-spacing:.5px;line-height:50px}
+.envp .e2{position:absolute;left:226px;top:34px;font-size:25px;font-weight:500;color:#C0344C;line-height:30px;letter-spacing:.8px}
+.envp .lb{font-size:14.6px;font-weight:600;letter-spacing:.35px;line-height:24px;white-space:nowrap;color:#10221B}
+.envp .vl{font-size:18px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#10221B}
+.envp .ln{height:0;border-top:1.5px solid #4D6055}.envp .vr{width:0;border-left:1.5px solid #4D6055}
+.envp .th{left:27px;top:395px;width:1200px;height:36px;background:#07E55E}
+.envp .th b{position:absolute;top:6px;font-size:14.6px;font-weight:600;letter-spacing:.35px;color:#10221B;line-height:22px}
+.envp .box{border:1.5px solid #4D6055;border-radius:10px;box-sizing:border-box}
+.envp .disc{padding:7px 14px;font-size:12px;font-weight:500;line-height:16.4px;text-align:justify;color:#2F4338;letter-spacing:.05px}
+.envp .foot{left:60px;top:816px;font-size:10.5px;font-weight:600;color:#2F4338;line-height:16px}`;
+  return `<style>${css}</style><div class="envp" id="envp-page">${h.join('')}</div>`;
+}
+
+// Valores por defecto del envío, tomados de la orden, el cliente, la unidad y el despacho.
+function envioDefaults({ data, unit, disp, trip, plantLabel }) {
+  const src = trip || disp || {};
+  const order = (data.orders || []).find(o => o.id === src.orderId);
+  const client = order ? (data.clients || []).find(c => c.id === order.clientId) : null;
+  let pilotoRec = '', dosifRec = '';
+  try { pilotoRec = localStorage.getItem('occ_piloto_' + ((unit && unit.id) || src.unitId)) || ''; dosifRec = localStorage.getItem('occ_dosif') || ''; } catch (e) {}
+  return {
+    cliente: client ? (client.codigo || '') : '',
+    proyecto: client ? (client.obra || '') : '',
+    direccion: client ? (client.ubicacion || '') : '',
+    planta: plantLabel || '',
+    camion: (unit ? unitLabel(unit) : (src.unitName || '')),
+    fecha: ddmmyyyy(src.salida || src.llegada || Date.now()),
+    salida: hhmm(src.salida), llegada: trip ? hhmm(trip.llegada) : '', horaDescarga: '', horaFin: '',
+    cantidad: src.volumeM3 != null ? String(src.volumeM3) : (order ? String(order.volumeM3) : ''),
+    unidad: 'm³',
+    descripcion: order ? (order.recipeName || '') : '',
+    piloto: pilotoRec, dosificador: dosifRec, observaciones: '',
+  };
+}
+
+function PrintableEnvio({ numero, datos, copias, onClose }) {
+  const [gen, setGen] = useState({ status: 'generating', error: null, images: [], pdfUrl: null, fileName: '' });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        try { await Promise.all(['400', '500', '600', '700'].map(w => document.fonts.load(`${w} 16px Poppins`))); await document.fonts.ready; } catch (e) {}
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [612, 396] });
+        const images = [];
+        const nCop = copias === 3 ? 3 : 1;
+        for (let i = 0; i < nCop; i++) {
+          const host = document.createElement('div');
+          host.style.cssText = 'position:fixed;left:-20000px;top:0;width:1282px;height:854.5px;background:#fff;';
+          host.innerHTML = envioPageHtml(datos, String(numero), i);
+          document.body.appendChild(host);
+          let canvas;
+          try { await new Promise(r => setTimeout(r, 60)); canvas = await html2canvas(host.querySelector('#envp-page'), { scale: 2.55, useCORS: true, backgroundColor: '#ffffff' }); }
+          finally { document.body.removeChild(host); }
+          if (cancelled) return;
+          if (i > 0) pdf.addPage([612, 396], 'landscape');
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 9, 0, 594, 396);
+          images.push(canvas.toDataURL('image/jpeg', 0.8));
+        }
+        const url = URL.createObjectURL(pdf.output('blob'));
+        if (!cancelled) setGen({ status: 'ready', error: null, images, pdfUrl: url, fileName: `envio-${numero}.pdf` });
+      } catch (e) { if (!cancelled) setGen(s => ({ ...s, status: 'error', error: e.message || String(e) })); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => () => { if (gen.pdfUrl) URL.revokeObjectURL(gen.pdfUrl); }, [gen.pdfUrl]);
+  const handleDownload = () => { if (!gen.pdfUrl) return; const a = document.createElement('a'); a.href = gen.pdfUrl; a.download = gen.fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+  const handleOpen = () => { if (gen.pdfUrl) window.open(gen.pdfUrl, '_blank'); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: '#FFFFFF', border: '1px solid #D3DFD6', borderRadius: 8, width: '100%', maxWidth: 820, maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#EEF3EF', borderBottom: '1px solid #D3DFD6', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#17251D', fontWeight: 700 }}><FileText size={18} /> Envío Nº {numero} · media carta · {copias === 3 ? '3 copias' : '1 copia'}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Btn variant="accent" onClick={handleDownload} disabled={gen.status !== 'ready'}><Download size={14} /> Descargar</Btn>
+            <Btn variant="ghost" onClick={handleOpen} disabled={gen.status !== 'ready'}>Abrir / imprimir</Btn>
+            <Btn variant="ghost" onClick={onClose} style={{ borderColor: '#6B3226', color: '#B54834' }}><X size={14} /> Cerrar</Btn>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 16, background: '#0F0E0D' }}>
+          {gen.status === 'generating' && <div style={{ textAlign: 'center', padding: 60, color: '#68786F' }}>Generando PDF…</div>}
+          {gen.status === 'error' && <div style={{ textAlign: 'center', padding: 40, color: '#B54834', fontSize: 13 }}>No se pudo generar el PDF: {gen.error}</div>}
+          {gen.status === 'ready' && gen.images.map((src, i) => <img key={i} src={src} alt={`Copia ${i + 1}`} style={{ width: '100%', display: 'block', marginBottom: 16, borderRadius: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ENVIO_CAMPOS = [
+  ['cliente', 'Cliente (código)'], ['proyecto', 'Proyecto / frente de concreto'], ['direccion', 'Dirección de la obra'], ['planta', 'Planta de concreto'],
+  ['camion', 'Código de camión'], ['fecha', 'Fecha'], ['salida', 'Salida de planta'], ['llegada', 'Llega a la obra'],
+  ['horaDescarga', 'Hora de descarga'], ['horaFin', 'Hora finalización descarga'],
+  ['cantidad', 'Cantidad'], ['unidad', 'Unidad'], ['descripcion', 'Descripción del producto'],
+  ['piloto', 'Piloto'], ['dosificador', 'Dosificador'], ['observaciones', 'Observaciones'],
+];
+
+function EnvioModal({ defaults, lockCantidad, unitKey, ctxInfo, sharedFleet, setSharedFleet, onClose, onDone }) {
+  const [tipo, setTipo] = useState('electronico');
+  const [f, setF] = useState(defaults);
+  const [copias, setCopias] = useState(1);
+  const [numFisico, setNumFisico] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }));
+  const recordar = () => { try { if (unitKey) localStorage.setItem('occ_piloto_' + unitKey, f.piloto || ''); localStorage.setItem('occ_dosif', f.dosificador || ''); } catch (e) {} };
+
+  const generar = async () => {
+    if (busy) return;
+    setBusy(true); setErr('');
+    try {
+      let numero;
+      if (SUPABASE_ENABLED && supabaseClient) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Sin conexión: para emitir un envío electrónico se necesita internet (el número lo asigna el servidor).');
+        const { data: n, error } = await supabaseClient.rpc('siguiente_envio', {
+          p_planta: f.planta || '', p_unidad: f.camion || '', p_cliente_codigo: f.cliente || '', p_orden: ctxInfo.orderId || '', p_datos: f,
+        });
+        if (error) throw new Error(error.message.indexOf('siguiente_envio') >= 0 || error.code === 'PGRST202' ? 'Falta ejecutar el script SQL de envíos en Supabase (occicon_envios_codigos.sql).' : error.message);
+        numero = Number(n);
+      } else {
+        numero = Number(sharedFleet.envioNext) || 3451;
+        setSharedFleet(d => ({ ...d, envioNext: numero + 1, envios: [...(d.envios || []), { numero, fecha: Date.now(), unidad: f.camion, cliente: f.cliente }] }));
+      }
+      recordar();
+      onDone({ tipo: 'electronico', numero, datos: f, copias });
+    } catch (e) { setErr(e.message || String(e)); setBusy(false); }
+  };
+
+  const guardarFisico = () => { onDone({ tipo: 'fisico', numeroFisico: numFisico.trim() }); };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+      <Card style={{ width: '100%', maxWidth: 640, maxHeight: '94vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>Envío — {f.camion}</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#53665A' }}><X size={18} /></button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <Btn variant={tipo === 'electronico' ? 'accent' : 'ghost'} onClick={() => setTipo('electronico')} style={{ flex: 1, justifyContent: 'center' }}>Electrónico</Btn>
+          <Btn variant={tipo === 'fisico' ? 'accent' : 'ghost'} onClick={() => setTipo('fisico')} style={{ flex: 1, justifyContent: 'center' }}>Físico (talonario)</Btn>
+        </div>
+        {tipo === 'fisico' ? (
+          <div>
+            <div style={{ fontSize: 12, color: '#68786F', marginBottom: 10 }}>Se usa el talonario de papel. No consume ningún número de la app. Si quieres, anota el número impreso para dejar registro.</div>
+            <Field label="Número del talonario (opcional)"><input style={inputStyle} value={numFisico} onChange={e => setNumFisico(e.target.value)} placeholder="ej. 3260" inputMode="numeric" /></Field>
+            <Btn variant="accent" onClick={guardarFisico}><Check size={14} /> Registrar envío físico</Btn>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: 12, color: '#68786F', marginBottom: 10 }}>Todo viene prellenado y se puede editar. El número se asigna al generar. Lo que cambies aquí solo afecta a este envío.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 560 ? '1fr 1fr' : '1fr', gap: '0 10px' }}>
+              {ENVIO_CAMPOS.map(([k, l]) => (
+                <Field key={k} label={l + (k === 'cantidad' && lockCantidad ? ' (según despacho)' : '')}>
+                  <input style={{ ...inputStyle, ...(k === 'cantidad' && lockCantidad ? { background: '#E9EEEA', color: '#53665A' } : {}) }} value={f[k] || ''} readOnly={k === 'cantidad' && lockCantidad} onChange={e => set(k, e.target.value)} />
+                </Field>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', margin: '4px 0 12px', fontSize: 13 }}>
+              <span style={{ color: '#53665A', fontWeight: 600 }}>Copias:</span>
+              <label><input type="radio" checked={copias === 1} onChange={() => setCopias(1)} /> 1 copia</label>
+              <label><input type="radio" checked={copias === 3} onChange={() => setCopias(3)} /> 3 copias (Cliente, Contabilidad, Archivo)</label>
+            </div>
+            {err && <div style={{ color: '#B54834', background: '#FDECE8', border: '1px solid #E3B7AE', borderRadius: 6, padding: '8px 10px', fontSize: 12, marginBottom: 10 }}>{err}</div>}
+            <Btn variant="accent" onClick={generar} disabled={busy}><FileText size={14} /> {busy ? 'Generando…' : 'Generar envío electrónico'}</Btn>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function EnvioAdminPanel({ sharedFleet }) {
+  const [open, setOpen] = useState(false);
+  const [info, setInfo] = useState(null);
+  const [nuevo, setNuevo] = useState('');
+  const [msg, setMsg] = useState('');
+  const cargar = async () => {
+    if (SUPABASE_ENABLED && supabaseClient) {
+      const { data: r } = await supabaseClient.from('envios_electronicos').select('numero').order('numero', { ascending: false }).limit(1);
+      setInfo(r && r[0] ? r[0].numero : 0);
+    } else setInfo((Number(sharedFleet.envioNext) || 3451) - 1);
+  };
+  useEffect(() => { if (open) cargar(); }, [open]);
+  const cambiar = async () => {
+    setMsg('');
+    const n = parseInt(nuevo, 10);
+    if (!n || n < 1) { setMsg('Indica un número válido.'); return; }
+    if (SUPABASE_ENABLED && supabaseClient) {
+      const { error } = await supabaseClient.rpc('cambiar_proximo_envio', { p_valor: n });
+      if (error) { setMsg(error.message); return; }
+    }
+    setMsg(`Listo: el próximo envío electrónico será el ${n}.`); setNuevo(''); cargar();
+  };
+  return (
+    <Card style={{ marginTop: 14 }}>
+      <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#07A845', fontSize: 13, fontWeight: 700, padding: 0 }}>Envíos electrónicos — administración {open ? '(ocultar)' : '(abrir)'}</button>
+      {open && (
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          <div>Último número emitido: <b>{info == null ? '…' : (info || '—')}</b></div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input style={{ ...inputStyle, width: 160 }} inputMode="numeric" value={nuevo} onChange={e => setNuevo(e.target.value)} placeholder="próximo número" />
+            <Btn variant="ghost" onClick={cambiar}>Cambiar próximo número</Btn>
+          </div>
+          {msg && <div style={{ marginTop: 6, fontSize: 12, color: '#53665A' }}>{msg}</div>}
+          <div style={{ marginTop: 6, fontSize: 11, color: '#68786F' }}>El servidor no permite un número menor o igual al último emitido.</div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFleet, plantId, soloPropios, isAdmin }) {
   const fleetHere = sharedFleet.fleet.filter(u => u.currentPlant === plantId);
   const remainingByOrder = (order) => {
     const assignedNow = Object.values(data.dispatches)
@@ -5076,6 +5374,38 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
   const [attachingTripId, setAttachingTripId] = useState(null);
   const [fileErrorTrip, setFileErrorTrip] = useState('');
   const [view, setView] = useState('viajes'); // 'viajes' | 'programacion'
+  const [envioCtx, setEnvioCtx] = useState(null);   // { kind:'unit', unitId } | { kind:'trip', tripId }
+  const [envioView, setEnvioView] = useState(null); // { numero, datos, copias } -> muestra el PDF
+  const plantLabel = ((sharedFleet.plants || []).find(x => x.id === plantId) || {}).label || '';
+
+  const abrirEnvio = (ctx) => {
+    const src = ctx.kind === 'unit' ? data.dispatches[ctx.unitId] : data.trips.find(t => t.id === ctx.tripId);
+    if (src && src.envioTipo === 'electronico' && !src.envioAnulado) { setEnvioView({ numero: src.envioNum, datos: src.envioDatos || {}, copias: src.envioCopias || 1 }); return; }
+    setEnvioCtx(ctx);
+  };
+  const guardarEnvio = (ctx, res) => {
+    const patch = res.tipo === 'electronico'
+      ? { envioTipo: 'electronico', envioNum: res.numero, envioDatos: res.datos, envioCopias: res.copias, envioFecha: Date.now(), envioAnulado: false }
+      : { envioTipo: 'fisico', envioFisico: res.numeroFisico || '', envioFecha: Date.now() };
+    if (ctx.kind === 'unit') setData(d => ({ ...d, dispatches: { ...d.dispatches, [ctx.unitId]: { ...d.dispatches[ctx.unitId], ...patch } } }));
+    else setData(d => ({ ...d, trips: d.trips.map(t => t.id === ctx.tripId ? { ...t, ...patch } : t) }));
+    const u = ctx.kind === 'unit' ? sharedFleet.fleet.find(x => x.id === ctx.unitId) : null;
+    logAudit(setData, username, res.tipo === 'electronico' ? 'Envío electrónico emitido' : 'Envío físico registrado',
+      `${res.tipo === 'electronico' ? 'Nº ' + res.numero : (res.numeroFisico ? 'talonario ' + res.numeroFisico : 'sin número')} · ${u ? unitLabel(u) : (res.datos && res.datos.camion) || ''}`);
+    setEnvioCtx(null);
+    if (res.tipo === 'electronico') setEnvioView({ numero: res.numero, datos: res.datos, copias: res.copias });
+  };
+  const anularEnvio = async (t) => {
+    const motivo = window.prompt(`Motivo para anular el envío Nº ${t.envioNum}:`);
+    if (!motivo || !motivo.trim()) return;
+    if (SUPABASE_ENABLED && supabaseClient) {
+      const { error } = await supabaseClient.rpc('anular_envio', { p_numero: t.envioNum, p_motivo: motivo.trim() });
+      if (error) { window.alert(error.message); return; }
+    }
+    setData(d => ({ ...d, trips: d.trips.map(x => x.id === t.id ? { ...x, envioAnulado: true, envioMotivo: motivo.trim() } : x) }));
+    logAudit(setData, username, 'Envío electrónico anulado', `Nº ${t.envioNum} · ${motivo.trim()}`);
+  };
+  const envioBtnLabel = (r) => r.envioTipo === 'electronico' ? (r.envioAnulado ? `Envío Nº ${r.envioNum} (anulado)` : `Envío Nº ${r.envioNum}`) : r.envioTipo === 'fisico' ? `Envío físico${r.envioFisico ? ' ' + r.envioFisico : ''}` : 'Envío';
 
   const handleTripFile = (tripId, e) => {
     const file = e.target.files && e.target.files[0];
@@ -5197,6 +5527,7 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
         unitId, unitName: unitLabel(unit), tipo: unit.type,
         orderId, volumeM3: tripVolume,
         asignacion: disp.since, salida: disp.salida || null, llegada,
+        envioTipo: disp.envioTipo || null, envioNum: disp.envioNum || null, envioFisico: disp.envioFisico || null, envioFecha: disp.envioFecha || null, envioDatos: disp.envioDatos || null, envioCopias: disp.envioCopias || 1,
       };
       const rest = { ...d.dispatches }; delete rest[unitId];
 
@@ -5308,6 +5639,7 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
     <div>
       <Eyebrow>Flotilla · {fleetHere.filter(u => u.type === 'camion').length} mixers · {fleetHere.filter(u => u.type === 'bomba').length} bomba(s) en esta planta</Eyebrow>
       <H1>Despachos</H1>
+      {isAdmin && <EnvioAdminPanel sharedFleet={sharedFleet} />}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button onClick={() => setView('viajes')} style={{
@@ -5454,6 +5786,11 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
                     {status === FINAL_STATUS[u.type] ? 'Liberar unidad' : `Marcar: ${FLOW[u.type][status]}`}
                     <ChevronRight size={14} />
                   </Btn>
+                  {u.type === 'camion' && (
+                    <Btn variant="ghost" onClick={() => abrirEnvio({ kind: 'unit', unitId: u.id })} style={{ width: '100%', justifyContent: 'center', marginBottom: 6, borderColor: '#07E55E', color: '#07A845' }}>
+                      <FileText size={13} /> {envioBtnLabel(disp)}
+                    </Btn>
+                  )}
                   {canModify(u.id) && (
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Btn variant="ghost" onClick={() => startEditAssign(u.id)} style={{ flex: 1, justifyContent: 'center', padding: '6px 8px', fontSize: 12 }}><Pencil size={12} /> Editar</Btn>
@@ -5511,6 +5848,8 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
                         : <>inicio {fmt(t.asignacion)} · fin {fmt(t.llegada)}</>}
                     </div>
                     <button onClick={() => setAttachingTripId(attachingTripId === t.id ? null : t.id)} title="Adjuntar evidencia de entrega" style={{ background: 'none', border: 'none', cursor: 'pointer', color: t.adjuntoDataUrl ? '#07E55E' : '#53665A' }}><Camera size={14} /></button>
+                    {t.tipo === 'camion' && <button onClick={() => abrirEnvio({ kind: 'trip', tripId: t.id })} title="Envío (nota de entrega)" style={{ background: 'none', border: '1px solid #BFE9CD', borderRadius: 3, cursor: 'pointer', color: '#07A845', fontSize: 11, fontWeight: 700, padding: '2px 6px' }}>{envioBtnLabel(t)}</button>}
+                    {isAdmin && t.envioTipo === 'electronico' && !t.envioAnulado && <button onClick={() => anularEnvio(t)} title="Anular envío (solo administrador)" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834', fontSize: 11 }}>anular</button>}
                     <button onClick={() => setPrintingTripId(t.id)} title="Imprimir / PDF" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#07E55E' }}><FileText size={14} /></button>
                     <button onClick={() => startEditTrip(t)} title="Editar viaje" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#53665A' }}><Pencil size={14} /></button>
                     <button onClick={() => deleteTrip(t)} title="Eliminar viaje" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B54834' }}><Trash2 size={14} /></button>
@@ -5541,6 +5880,17 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
         </div>
       </Card>
       </>)}
+
+      {envioCtx && (() => {
+        const unit = envioCtx.kind === 'unit' ? sharedFleet.fleet.find(x => x.id === envioCtx.unitId) : sharedFleet.fleet.find(x => x.id === (data.trips.find(t => t.id === envioCtx.tripId) || {}).unitId);
+        const disp = envioCtx.kind === 'unit' ? data.dispatches[envioCtx.unitId] : null;
+        const trip = envioCtx.kind === 'trip' ? data.trips.find(t => t.id === envioCtx.tripId) : null;
+        if (!disp && !trip) return null;
+        return <EnvioModal defaults={envioDefaults({ data, unit, disp, trip, plantLabel })} lockCantidad unitKey={unit ? unit.id : ''}
+          ctxInfo={{ orderId: (disp || trip).orderId }} sharedFleet={sharedFleet} setSharedFleet={setSharedFleet}
+          onClose={() => setEnvioCtx(null)} onDone={(res) => guardarEnvio(envioCtx, res)} />;
+      })()}
+      {envioView && <PrintableEnvio numero={envioView.numero} datos={envioView.datos} copias={envioView.copias} onClose={() => setEnvioView(null)} />}
 
       {printingTripId && (() => {
         const trip = data.trips.find(t => t.id === printingTripId);
@@ -6029,7 +6379,15 @@ const ESTADO_COLORS = { 'Prospecto': '#F2A900', 'Cliente activo': '#07E55E', 'In
 
 const CONTACT_TYPES = ['Llamada', 'WhatsApp', 'Email', 'Visita', 'Otro'];
 
-function Clientes({ data, setData, username, soloPropios }) {
+function Clientes({ data, setData, username, soloPropios, isAdmin }) {
+  const cambiarCodigo = async (c) => {
+    const nuevo = window.prompt(`Nuevo código para ${c.name} (actual: ${c.codigo}). Se aplica a todas las plantas.`, c.codigo);
+    if (nuevo === null || !nuevo.trim()) return;
+    const { data: cod, error } = await supabaseClient.rpc('cambiar_codigo_cliente', { p_nombre: c.name, p_codigo: nuevo });
+    if (error) { window.alert(error.message); return; }
+    setData(d => ({ ...d, clients: d.clients.map(x => normNombre(x.name) === normNombre(c.name) ? { ...x, codigo: cod } : x) }));
+    logAudit(setData, username, 'Código de cliente cambiado', `${c.name}: ${c.codigo} → ${cod}`);
+  };
   const misClientes = soloPropios ? data.clients.filter(c => c.creadoPor === username) : data.clients;
   const [form, setForm] = useState({ name: '', obra: '', ubicacion: '', telefono: '', estado: 'Prospecto' });
   const [expanded, setExpanded] = useState(null);
@@ -6122,7 +6480,8 @@ function Clientes({ data, setData, username, soloPropios }) {
                         display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0B0B0A', fontWeight: 700, fontSize: 13,
                       }}>{initials(c.name)}</div>
                       <div>
-                        <div style={{ fontWeight: 700, color: '#17251D' }}>{c.name}</div>
+                        <div style={{ fontWeight: 700, color: '#17251D' }}>{c.name} <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#07A845', background: '#E9F8EE', border: '1px solid #BFE9CD', borderRadius: 3, padding: '1px 6px', marginLeft: 4 }}>{c.codigo || 'asignando…'}</span>
+                          {isAdmin && c.codigo && SUPABASE_ENABLED && <button onClick={() => cambiarCodigo(c)} title="Cambiar código (solo administrador)" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#53665A', marginLeft: 4 }}><Pencil size={12} /></button>}</div>
                         <div style={{ fontSize: 12, color: '#68786F' }}>{c.obra}{c.ubicacion ? ` · ${c.ubicacion}` : ''}{c.telefono ? ` · ${c.telefono}` : ''}</div>
                       </div>
                     </div>
@@ -8036,6 +8395,97 @@ function Conciliacion({ data, setData }) {
   );
 }
 
+function ReportesProduccion({ data, isOffline }) {
+  // Vista de reportes para el perfil dosificador: solo producción, consumo de materiales y calidad. Sin dinero.
+  const [rangeMode, setRangeMode] = useState('mes');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const { from, to, rangeLabel } = useMemo(() => {
+    const today = todayStr();
+    if (rangeMode === 'hoy') return { from: today, to: today, rangeLabel: `Hoy (${today})` };
+    if (rangeMode === 'mes') {
+      const d = new Date();
+      const first = localDateToStr(new Date(d.getFullYear(), d.getMonth(), 1));
+      return { from: first, to: today, rangeLabel: `Este mes (${first} a ${today})` };
+    }
+    if (rangeMode === 'rango' && rangeFrom && rangeTo) return { from: rangeFrom, to: rangeTo, rangeLabel: `${rangeFrom} a ${rangeTo}` };
+    return { from: null, to: null, rangeLabel: 'Todo el histórico' };
+  }, [rangeMode, rangeFrom, rangeTo]);
+  const inRange = (d) => { if (!from && !to) return true; if (!d) return false; if (from && d < from) return false; if (to && d > to) return false; return true; };
+
+  const orders = (data.orders || []).filter(o => inRange(o.date));
+  const totalM3 = orders.reduce((a, o) => a + (Number(o.volumeM3) || 0), 0);
+  const group = (keyFn) => {
+    const m = {};
+    orders.forEach(o => { const k = keyFn(o); m[k] = (m[k] || 0) + (Number(o.volumeM3) || 0); });
+    return Object.entries(m).map(([k, v]) => ({ k, v }));
+  };
+  const porDia = group(o => o.date || '—').sort((a, b) => a.k.localeCompare(b.k));
+  const porDiseno = group(o => o.recipeName || 'Sin diseño').sort((a, b) => b.v - a.v);
+  const clienteNombre = (id) => (data.clients.find(c => c.id === id) || {}).name || 'Sin cliente';
+  const porCliente = group(o => clienteNombre(o.clientId)).sort((a, b) => b.v - a.v);
+  const consumo = {};
+  orders.forEach(o => Object.entries(consumoDeOrden(o, data.recipes)).forEach(([k, v]) => { consumo[k] = (consumo[k] || 0) + (Number(v) || 0); }));
+  const consumoRows = Object.entries(consumo).filter(([k]) => data.inventory[k]).map(([k, v]) => ({ k, label: data.inventory[k].label, unit: data.inventory[k].unit, v })).sort((a, b) => b.v - a.v);
+  const tests = (data.qualityTests || []).filter(t => inRange(t.fecha)).slice().sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+  const bar = (v, max) => <div style={{ height: 8, borderRadius: 4, background: '#07E55E', width: `${Math.max(2, (v / Math.max(max, 0.0001)) * 100)}%` }} />;
+  const rows = (list, unit) => {
+    const max = Math.max(0, ...list.map(x => x.v));
+    return list.length === 0 ? <div style={{ color: '#68786F', fontSize: 13 }}>Sin datos en este periodo.</div> : (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {list.map(x => (
+          <div key={x.k}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, gap: 8 }}><span>{x.label || x.k}</span><span style={{ fontWeight: 700 }}>{x.v.toFixed(2)} {x.unit || unit}</span></div>
+            {bar(x.v, max)}
+          </div>
+        ))}
+      </div>
+    );
+  };
+  return (
+    <div>
+      <Eyebrow>Producción</Eyebrow>
+      <H1>Reportes</H1>
+      {isOffline && <div style={{ background: '#FFF3DC', border: '1px solid #F2A900', borderRadius: 4, padding: '10px 14px', fontSize: 12, color: '#8A5A00', marginTop: 14 }}>Aún se están cargando los datos desde la nube; los totales pueden estar incompletos.</div>}
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#53665A', marginBottom: 10 }}>Periodo — {rangeLabel}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[['hoy', 'Hoy'], ['mes', 'Este mes'], ['rango', 'Rango personalizado'], ['todo', 'Todo el histórico']].map(([m, l]) => (
+            <Btn key={m} variant={rangeMode === m ? 'accent' : 'ghost'} onClick={() => setRangeMode(m)} style={{ padding: '6px 12px', fontSize: 12 }}>{l}</Btn>
+          ))}
+        </div>
+        {rangeMode === 'rango' && (
+          <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 500 ? '1fr 1fr' : '1fr', gap: 8, marginTop: 12 }}>
+            <Field label="Desde"><input type="date" style={inputStyle} value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} /></Field>
+            <Field label="Hasta"><input type="date" style={inputStyle} value={rangeTo} onChange={e => setRangeTo(e.target.value)} /></Field>
+          </div>
+        )}
+      </Card>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#68786F', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Producido en el periodo</div>
+        <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900, fontSize: 32, color: '#07E55E', marginTop: 4 }}>{totalM3.toFixed(2)} m³</div>
+        <div style={{ fontSize: 11, color: '#68786F' }}>{orders.length} orden{orders.length === 1 ? '' : 'es'}</div>
+      </Card>
+      <Card style={{ marginTop: 16 }}><div style={{ fontWeight: 700, marginBottom: 12 }}>Volumen por día (m³)</div>{rows(porDia.map(x => ({ ...x, label: x.k })), 'm³')}</Card>
+      <Card style={{ marginTop: 16 }}><div style={{ fontWeight: 700, marginBottom: 12 }}>Volumen por diseño (m³)</div>{rows(porDiseno, 'm³')}</Card>
+      <Card style={{ marginTop: 16 }}><div style={{ fontWeight: 700, marginBottom: 12 }}>Volumen por cliente (m³)</div>{rows(porCliente, 'm³')}</Card>
+      <Card style={{ marginTop: 16 }}><div style={{ fontWeight: 700, marginBottom: 12 }}>Consumo de materiales</div>{rows(consumoRows.map(x => ({ ...x, k: x.k })), '')}</Card>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 12 }}>Calidad — pruebas del periodo ({tests.length})</div>
+        {tests.length === 0 && <div style={{ color: '#68786F', fontSize: 13 }}>Sin pruebas en este periodo.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {tests.slice(0, 40).map(t => (
+            <div key={t.id} style={{ border: '1px solid #D3DFD6', borderRadius: 4, padding: 10, fontSize: 13 }}>
+              <div style={{ fontWeight: 700 }}>{t.fecha} · {clienteNombre(t.clientId)}{t.orderId ? ` · ${t.orderId}` : ''}</div>
+              <div style={{ color: '#68786F', fontSize: 12 }}>Diseño {t.resistenciaDisenoPsi || '—'} PSI · 7d: {t.resultado7 || '—'} · 14d: {t.resultado14 || '—'} · 28d: {t.resultado28 || '—'}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function Reportes({ data, setData, isOffline }) {
   const [rangeMode, setRangeMode] = useState('todo'); // 'hoy' | 'mes' | 'rango' | 'todo'
   const [rangeFrom, setRangeFrom] = useState('');
@@ -9094,6 +9544,9 @@ function Datos({ data, setData, plantId, sharedFleet }) {
 }
 
 const PERMISSION_TABS = NAV; // mismas secciones que el menú principal
+// Perfil "dosificador": secciones de planta, sin precios, reportes solo de producción y sin borrar órdenes.
+const DOSIF_PERMS = { produccion: true, despachos: true, calidad: true, inventario: true, reportes: true, sinPrecios: true, repSoloProduccion: true, noBorrar: true };
+const FLAG_LABELS = [['sinPrecios', 'Ocultar precios y utilidades'], ['repSoloProduccion', 'Reportes solo de producción'], ['noBorrar', 'No puede eliminar órdenes']];
 
 function Usuarios({ username, data: plantData, setData: setPlantData }) {
   const [profiles, setProfiles] = useState(null);
@@ -9210,6 +9663,18 @@ function Usuarios({ username, data: plantData, setData: setPlantData }) {
                 Modo vendedor: solo ve sus cotizaciones y, en la agenda, únicamente espacios ocupados/libres
               </label>
             )}
+            {form.role === 'user' && (
+              <div style={{ marginBottom: 10 }}>
+                <Btn variant="ghost" onClick={() => setForm(f => ({ ...f, permissions: { ...DOSIF_PERMS } }))} style={{ padding: '5px 10px', fontSize: 12 }}>Aplicar perfil dosificador</Btn>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                  {FLAG_LABELS.map(([k, l]) => (
+                    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#53665A', background: '#EEF3EF', padding: '5px 8px', borderRadius: 3 }}>
+                      <input type="checkbox" checked={!!form.permissions[k]} onChange={() => togglePerm(k)} /> {l}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             {formError && <div style={{ color: '#B54834', fontSize: 12, marginBottom: 8 }}>{formError}</div>}
             <Btn variant="accent" onClick={createUser} disabled={busy}><Plus size={14} /> {busy ? 'Creando…' : 'Crear usuario'}</Btn>
           </div>
@@ -9256,6 +9721,13 @@ function Usuarios({ username, data: plantData, setData: setPlantData }) {
                       onChange={() => updateProfile(p.id, { permissions: { ...(p.permissions || {}), soloPropios: !(p.permissions || {}).soloPropios } }, p.username)} />
                     Modo vendedor
                   </label>
+                  <Btn variant="ghost" onClick={() => updateProfile(p.id, { permissions: { ...DOSIF_PERMS } }, p.username)} style={{ padding: '4px 8px', fontSize: 11 }}>Aplicar perfil dosificador</Btn>
+                  {FLAG_LABELS.map(([k, l]) => (
+                    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#53665A', background: '#EEF3EF', padding: '5px 8px', borderRadius: 3 }}>
+                      <input type="checkbox" checked={!!(p.permissions || {})[k]}
+                        onChange={() => updateProfile(p.id, { permissions: { ...(p.permissions || {}), [k]: !(p.permissions || {})[k] } }, p.username)} /> {l}
+                    </label>
+                  ))}
                 </div>
               )}
             </div>
