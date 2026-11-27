@@ -804,8 +804,8 @@ function normalizeFleetData(d) {
     plants,
     nextCamionNum: typeof d.nextCamionNum === 'number' ? d.nextCamionNum : maxCamionNum + 1,
     nextBombaNum: typeof d.nextBombaNum === 'number' ? d.nextBombaNum : maxBombaNum + 1,
-    // Correlativo de envíos electrónicos (compartido por todas las plantas). Arranca en 3451.
-    envioNext: Number.isFinite(Number(d.envioNext)) && Number(d.envioNext) > 0 ? Math.floor(Number(d.envioNext)) : 3451,
+    // Correlativo de envíos electrónicos (compartido por todas las plantas). Arranca en 3257.
+    envioNext: Number.isFinite(Number(d.envioNext)) && Number(d.envioNext) > 0 ? Math.floor(Number(d.envioNext)) : 3257,
     envios: Array.isArray(d.envios) ? d.envios : [],
   };
 }
@@ -1565,7 +1565,7 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
       <header className="executive-header" style={{ background: '#10221B', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #07E55E', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <img src={`data:image/png;base64,${LOGO_B64}`} alt="Occicon" style={{ height: 44, display: 'block' }} />
-          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2310</div>
+          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2320</div>
         </div>
         <div className="executive-header-tools" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {(plants.length > 1 || isAdmin) && (
@@ -5256,7 +5256,7 @@ function EnvioModal({ defaults, lockCantidad, unitKey, ctxInfo, sharedFleet, set
         if (error) throw new Error(error.message.indexOf('siguiente_envio') >= 0 || error.code === 'PGRST202' ? 'Falta ejecutar el script SQL de envíos en Supabase (occicon_envios_codigos.sql).' : error.message);
         numero = Number(n);
       } else {
-        numero = Number(sharedFleet.envioNext) || 3451;
+        numero = Number(sharedFleet.envioNext) || 3257;
         setSharedFleet(d => ({ ...d, envioNext: numero + 1, envios: [...(d.envios || []), { numero, fecha: Date.now(), unidad: f.camion, cliente: f.cliente, clienteCodigo: f.clienteCodigo || '' }] }));
       }
       recordar();
@@ -5316,7 +5316,7 @@ function EnvioAdminPanel({ sharedFleet }) {
     if (SUPABASE_ENABLED && supabaseClient) {
       const { data: r } = await supabaseClient.from('envios_electronicos').select('numero').order('numero', { ascending: false }).limit(1);
       setInfo(r && r[0] ? r[0].numero : 0);
-    } else setInfo((Number(sharedFleet.envioNext) || 3451) - 1);
+    } else setInfo((Number(sharedFleet.envioNext) || 3257) - 1);
   };
   useEffect(() => { if (open) cargar(); }, [open]);
   const cambiar = async () => {
