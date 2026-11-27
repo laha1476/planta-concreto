@@ -1565,7 +1565,7 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
       <header className="executive-header" style={{ background: '#10221B', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #07E55E', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <img src={`data:image/png;base64,${LOGO_B64}`} alt="Occicon" style={{ height: 44, display: 'block' }} />
-          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2335</div>
+          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-27-0010</div>
         </div>
         <div className="executive-header-tools" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {(plants.length > 1 || isAdmin) && (
@@ -5412,7 +5412,17 @@ function Despachos({ data, setData, username, setTab, sharedFleet, setSharedFlee
     if (!motivo || !motivo.trim()) return;
     if (SUPABASE_ENABLED && supabaseClient) {
       const { error } = await supabaseClient.rpc('anular_envio', { p_numero: t.envioNum, p_motivo: motivo.trim() });
-      if (error) { window.alert(error.message); return; }
+      if (error) {
+        if (/no existe/i.test(error.message)) {
+          // El servidor ya no tiene ese número (por ejemplo, tras reiniciar los envíos de prueba): se quita solo de este viaje.
+          if (!window.confirm(`El servidor ya no tiene el envío Nº ${t.envioNum}. ¿Quitarlo solo de este viaje?`)) return;
+          const strip = (o) => { const n = { ...o }; ['envioTipo', 'envioNum', 'envioFisico', 'envioFecha', 'envioDatos', 'envioCopias', 'envioAnulado', 'envioMotivo'].forEach(k => delete n[k]); return n; };
+          setData(d => ({ ...d, trips: d.trips.map(x => x.id === t.id ? strip(x) : x) }));
+          logAudit(setData, username, 'Envío quitado del viaje', `Nº ${t.envioNum} ya no existía en el servidor · ${motivo.trim()}`);
+          return;
+        }
+        window.alert(error.message); return;
+      }
     }
     setData(d => ({ ...d, trips: d.trips.map(x => x.id === t.id ? { ...x, envioAnulado: true, envioMotivo: motivo.trim() } : x) }));
     logAudit(setData, username, 'Envío electrónico anulado', `Nº ${t.envioNum} · ${motivo.trim()}`);
