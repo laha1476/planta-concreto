@@ -1565,7 +1565,7 @@ function PlantApp({ plantId, onSwitchPlant, auth, sharedFleet, setSharedFleet })
       <header className="executive-header" style={{ background: '#10221B', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '4px solid #07E55E', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <img src={`data:image/png;base64,${LOGO_B64}`} alt="Occicon" style={{ height: 44, display: 'block' }} />
-          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2230</div>
+          <div className="executive-build" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: '#A9BDB0', letterSpacing: '0.08em', marginTop: 4 }}><span className="eb-long">CONTROL DE OPERACIÓN · {sharedFleet.fleet.length} UNIDADES · </span>build 2026-11-26-2310</div>
         </div>
         <div className="executive-header-tools" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {(plants.length > 1 || isAdmin) && (
@@ -5156,7 +5156,8 @@ function envioDefaults({ data, unit, disp, trip, plantLabel }) {
   let pilotoRec = '', dosifRec = '';
   try { pilotoRec = localStorage.getItem('occ_piloto_' + ((unit && unit.id) || src.unitId)) || ''; dosifRec = localStorage.getItem('occ_dosif') || ''; } catch (e) {}
   return {
-    cliente: client ? (client.codigo || '') : '',
+    cliente: client ? (client.name || '') : '',
+    clienteCodigo: client ? (client.codigo || '') : '',
     proyecto: client ? (client.obra || '') : '',
     direccion: client ? (client.ubicacion || '') : '',
     planta: plantLabel || '',
@@ -5225,7 +5226,7 @@ function PrintableEnvio({ numero, datos, copias, onClose }) {
 }
 
 const ENVIO_CAMPOS = [
-  ['cliente', 'Cliente (código)'], ['proyecto', 'Proyecto / frente de concreto'], ['direccion', 'Dirección de la obra'], ['planta', 'Planta de concreto'],
+  ['cliente', 'Nombre del cliente'], ['proyecto', 'Proyecto / frente de concreto'], ['direccion', 'Dirección de la obra'], ['planta', 'Planta de concreto'],
   ['camion', 'Código de camión'], ['fecha', 'Fecha'], ['salida', 'Salida de planta'], ['llegada', 'Llega a la obra'],
   ['horaDescarga', 'Hora de descarga'], ['horaFin', 'Hora finalización descarga'],
   ['cantidad', 'Cantidad'], ['unidad', 'Unidad'], ['descripcion', 'Descripción del producto'],
@@ -5250,13 +5251,13 @@ function EnvioModal({ defaults, lockCantidad, unitKey, ctxInfo, sharedFleet, set
       if (SUPABASE_ENABLED && supabaseClient) {
         if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Sin conexión: para emitir un envío electrónico se necesita internet (el número lo asigna el servidor).');
         const { data: n, error } = await supabaseClient.rpc('siguiente_envio', {
-          p_planta: f.planta || '', p_unidad: f.camion || '', p_cliente_codigo: f.cliente || '', p_orden: ctxInfo.orderId || '', p_datos: f,
+          p_planta: f.planta || '', p_unidad: f.camion || '', p_cliente_codigo: f.clienteCodigo || '', p_orden: ctxInfo.orderId || '', p_datos: f,
         });
         if (error) throw new Error(error.message.indexOf('siguiente_envio') >= 0 || error.code === 'PGRST202' ? 'Falta ejecutar el script SQL de envíos en Supabase (occicon_envios_codigos.sql).' : error.message);
         numero = Number(n);
       } else {
         numero = Number(sharedFleet.envioNext) || 3451;
-        setSharedFleet(d => ({ ...d, envioNext: numero + 1, envios: [...(d.envios || []), { numero, fecha: Date.now(), unidad: f.camion, cliente: f.cliente }] }));
+        setSharedFleet(d => ({ ...d, envioNext: numero + 1, envios: [...(d.envios || []), { numero, fecha: Date.now(), unidad: f.camion, cliente: f.cliente, clienteCodigo: f.clienteCodigo || '' }] }));
       }
       recordar();
       onDone({ tipo: 'electronico', numero, datos: f, copias });
